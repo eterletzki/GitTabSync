@@ -1,0 +1,50 @@
+# This workflow will build a .NET project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-net
+
+name: .NET
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    # Windows, because the VSIX cannot be built anywhere else: it targets net472 and its packaging
+    # targets shell out to Windows tooling. On Linux it fails before the build even starts, because
+    # Microsoft.VSSDK.BuildTools imports "Microsoft.VSSDK.targets" while the package ships
+    # "Microsoft.VsSDK.targets" — a casing mismatch only a case-sensitive filesystem notices.
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        # The test project targets net9.0; don't rely on whatever the image happens to ship.
+        dotnet-version: 9.0.x
+    # `dotnet build` cannot build the VSIX — packaging needs full MSBuild. The "Visual Studio
+    # extension development" workload is still not required: VSSDKBuildToolsAutoSetup in
+    # GitTabSync.Vsix.csproj imports the targets from NuGet.
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+    # Core has no Visual Studio dependency, so its tests run on the plain SDK. That includes
+    # RealGitIntegrationTests, which need git on PATH — the runner image has it.
+    # One project only — `dotnet restore` rejects a second argument. Core comes along as a
+    # ProjectReference.
+    - name: Restore dependencies
+      run: dotnet restore tests/GitTabSync.Core.Tests/GitTabSync.Core.Tests.csproj
+    - name: Build
+      run: dotnet build tests/GitTabSync.Core.Tests/GitTabSync.Core.Tests.csproj --no-restore
+    - name: Test
+      run: dotnet test tests/GitTabSync.Core.Tests/GitTabSync.Core.Tests.csproj --no-build
+    - name: Build VSIX
+      run: msbuild src/GitTabSync.Vsix/GitTabSync.Vsix.csproj /p:Configuration=Release /restore
+    - name: Upload VSIX
+      uses: actions/upload-artifact@v4
+      with:
+        name: GitTabSync.vsix
+        path: src/GitTabSync.Vsix/bin/Release/net472/GitTabSync.Vsix.vsix
+        if-no-files-found: error
