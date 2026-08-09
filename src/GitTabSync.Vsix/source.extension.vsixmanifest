@@ -4,7 +4,7 @@
     <Identity Id="GitTabSync.9f2c1d64-5f7a-4a3b-8c2e-6d4b0e1a7c53"
               Version="0.1.0"
               Language="en-US"
-              Publisher="Eterletzki" />
+              Publisher="Erik Terletzki" />
     <DisplayName>Git Tab Sync</DisplayName>
     <Description xml:space="preserve">Remembers which documents were open on each git branch and restores them when you switch back, including branch switches made outside Visual Studio.</Description>
     <MoreInfo>https://github.com/Eterletzki/GitTabSync</MoreInfo>
