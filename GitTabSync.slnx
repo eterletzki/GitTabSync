@@ -1,0 +1,14 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/src/">
+    <Project Path="src/GitTabSync.Core/GitTabSync.Core.csproj" />
+    <Project Path="src/GitTabSync.Vsix/GitTabSync.Vsix.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GitTabSync.Core.Tests/GitTabSync.Core.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,30 @@
+## Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+artifacts/
+*.binlog
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+*.VisualState.xml
+TestResult.xml
+
+## VSIX
+# NOT "*.vsix": that pattern also matches the src/GitTabSync.Vsix *directory*, which silently
+# excludes the entire extension project from the repository. Built packages only ever land in
+# bin/, which is already ignored above.
+*.pdb
+
+## NuGet
+packages/
+*.nupkg
+!packages/build/
+
+## Rider / VS Code
+.idea/
+.vscode/

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- netstandard2.0 so the same assembly is consumable by the .NET Framework VSIX
+         and by the modern .NET test project. Deliberately no Visual Studio references:
+         everything in here must be testable without the VS SDK installed. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>GitTabSync</RootNamespace>
+    <AssemblyName>GitTabSync.Core</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Serialization uses DataContractJsonSerializer (in-box on netstandard2.0 and .NET
+       Framework), deliberately chosen over Newtonsoft/System.Text.Json: the VSIX then ships
+       no extra assemblies and cannot hit binding-redirect conflicts with the copies Visual
+       Studio already has loaded in-process. -->
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GitTabSync.Core.Tests" />
+  </ItemGroup>
+
+</Project>

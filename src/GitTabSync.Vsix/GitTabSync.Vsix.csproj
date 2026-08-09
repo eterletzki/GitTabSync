@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <RootNamespace>GitTabSync</RootNamespace>
+    <AssemblyName>GitTabSync.Vsix</AssemblyName>
+    <UseCodebase>true</UseCodebase>
+
+    <!-- Makes Microsoft.VSSDK.BuildTools import the VSIX packaging targets from the NuGet
+         package (it defaults to false). This is what lets the extension build with nothing but
+         the .NET SDK and MSBuild — the "Visual Studio extension development" workload is not
+         required, so CI and a fresh clone can both produce a .vsix. -->
+    <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
+
+    <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <CreateVsixContainer>true</CreateVsixContainer>
+    <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
+    <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
+    <IncludeCopyLocalReferencesInVSIXContainer>true</IncludeCopyLocalReferencesInVSIXContainer>
+    <DeployExtension>false</DeployExtension>
+
+    <!-- The Visual Studio SDK reference assemblies are not nullable-annotated and the VSSDK
+         targets emit their own warnings; failing the build on those would mean fighting the SDK
+         rather than the code. The Core project, where the logic lives, keeps warnings as errors. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 17.x reference assemblies: the APIs used here are long-standing and present in both
+         Visual Studio 2022 (17.x) and 2026 (18.x), so one build targets both. -->
+    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.40034" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="source.extension.vsixmanifest">
+      <SubType>Designer</SubType>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GitTabSync.Core\GitTabSync.Core.csproj" />
+  </ItemGroup>
+
+</Project>

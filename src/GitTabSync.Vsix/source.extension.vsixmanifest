@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Id="GitTabSync.9f2c1d64-5f7a-4a3b-8c2e-6d4b0e1a7c53"
+              Version="0.1.0"
+              Language="en-US"
+              Publisher="Eterletzki" />
+    <DisplayName>Git Tab Sync</DisplayName>
+    <Description xml:space="preserve">Remembers which documents were open on each git branch and restores them when you switch back, including branch switches made outside Visual Studio.</Description>
+    <MoreInfo>https://github.com/Eterletzki/GitTabSync</MoreInfo>
+    <Tags>git, branch, tabs, documents, workflow</Tags>
+  </Metadata>
+  <Installation>
+    <!-- Covers Visual Studio 2022 (17.x) and 2026 (18.x). -->
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0,19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0,19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="[4.5,)" />
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[17.0,19.0)" DisplayName="Visual Studio core editor" />
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
+    <!-- "|%CurrentProject%|" is the primary output. The AssemblyProjectOutputGroup form used by
+         classic VSIX projects does not exist in SDK-style projects. -->
+    <Asset Type="Microsoft.VisualStudio.Assembly" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%|" AssemblyName="GitTabSync.Vsix" />
+  </Assets>
+</PackageManifest>
