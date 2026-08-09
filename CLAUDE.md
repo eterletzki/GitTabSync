@@ -6,7 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Visual Studio extension that remembers which documents were open on each git branch and restores
 them when you switch back — including branch switches made outside Visual Studio. Tabs are the only
-feature in scope; bookmarks and breakpoints are a deliberate later step (see [README.md](README.md)).
+feature in scope; bookmarks and breakpoints are a deliberate later step.
+
+[README.md](README.md) is the user-facing description (settings, storage format, troubleshooting).
+This file is the working notes: build commands, why the code is shaped the way it is, and what is
+unverified. Keep both accurate when behaviour changes — the README's status table and the test count
+in both files are the things that go stale first.
 
 ## Commands
 
@@ -55,6 +60,34 @@ of the VSIX.**
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
 
+### Where things live
+
+```
+Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity), BranchMonitor
+Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
+Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal)
+Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
+                TabSyncOptions, ITabSyncLog
+Vsix/           GitTabSyncPackage (autoload + solution events), RepositorySyncSession (RDT
+                subscription, one per open repo), VsEditorTabs (the only file touching editor
+                windows), GitTabSyncOptionsPage, OutputWindowLog
+```
+
+The seam is `IEditorTabs`: Core never sees a VS type, the VSIX never makes a sync decision. New
+logic belongs in Core with a test; only shell plumbing belongs in the VSIX.
+
+### Flow of one branch switch
+
+`.git/HEAD` changes → `BranchMonitor` (watcher or poll) → debounce → `CheckNow` reads and compares →
+`BranchChanged` on a **timer thread** → `TabSyncCoordinator.OnBranchChanged` saves the *stored
+snapshot* under the outgoing head, then loads the incoming head's session, drops entries whose files
+are missing, and calls `IEditorTabs.ApplyTabs` → `VsEditorTabs` marshals to the UI thread, closes
+what is not wanted (never a dirty document), opens the rest, restores carets.
+
+Meanwhile, independently: RDT document events → `RepositorySyncSession.ScheduleCapture` (300 ms
+debounce, because events arrive in bursts while documents are still half-open) →
+`TabSyncCoordinator.CaptureSnapshot` → reads the editor and replaces the snapshot.
+
 ### The two constraints that shape everything
 
 **1. Branch changes originate outside Visual Studio.** This is the problem the project exists for.
@@ -83,14 +116,22 @@ which would otherwise overwrite the snapshot with a half-applied state.
 
 - **Storage lives in `%LOCALAPPDATA%\GitTabSync`**, never in the working tree — anything inside it
   would be rewritten by the very checkout the session exists to survive, and would show as a pending
-  change on every switch.
+  change on every switch. Layout: `repos\<repo-key>\<head-key>.json`.
 - **Session keys are `readable prefix + hash`** ([StorageKey](src/GitTabSync.Core/Storage/StorageKey.cs)).
   Branch names contain characters illegal in filenames, and sanitising alone maps `feature/foo` and
   `feature-foo` onto one file. Repo keys are case-*insensitive* (Windows paths); head keys are
   case-*sensitive* (git refs). Both halves must match that, prefix included.
+- **`GitHead.SessionKey` is prefixed** (`branch/` or `detached/`) so a branch literally named after a
+  commit id cannot collide with the detached state at that commit.
 - **Serialisation is `DataContractJsonSerializer`**, chosen over Newtonsoft/System.Text.Json so the
   VSIX ships no extra assemblies and cannot hit binding-redirect conflicts with the copies VS already
-  has loaded. It escapes `/` as `\/` — valid JSON, left alone deliberately.
+  has loaded. It escapes `/` as `\/` — valid JSON, left alone deliberately. Adding a field means a
+  `[DataMember(Order = …)]`; an incompatible reshape means bumping `TabSession.CurrentSchemaVersion`
+  (a newer schema on disk is ignored, not half-read).
+- **Paths are stored repository-relative with `/` separators** where possible, so sessions survive
+  the repo being moved or re-cloned; files outside the repo are stored absolute.
+- **Saves are write-temp-then-replace.** A crash mid-write must not leave a truncated file where a
+  good session was.
 - **Missing files are dropped on restore.** A branch switch is exactly what makes files appear and
   disappear, so a stored session routinely names files absent on the target branch.
 - **Dirty documents are never closed** ([VsEditorTabs](src/GitTabSync.Vsix/VsEditorTabs.cs)), and
@@ -104,12 +145,20 @@ which would otherwise overwrite the snapshot with a half-applied state.
 
 Core raises `BranchChanged` on a **timer thread**. `VsEditorTabs` marshals to the UI thread itself
 via `JoinableTaskFactory`; callers do not. Timer callbacks in Core and the VSIX both catch broadly —
-an escaped exception on a timer thread takes the process down.
+an escaped exception on a timer thread takes the process down. `OutputWindowLog` uses
+`OutputStringThreadSafe` for the same reason (with a deliberate `VSTHRD010` suppression).
+
+### Diagnostics
+
+Everything the extension decides goes to the **Git Tab Sync** pane in the VS Output window via
+`ITabSyncLog`. It is the only way to see why an automatic action happened, so prefer adding a log
+line over adding silence when you extend the sync path.
 
 ## Testing notes
 
 Tests use real temp directories rather than a mocked filesystem, because the behaviour that matters
 (file locking, rename-over-the-top, path casing) is exactly what a mock would not reproduce.
+`FakeEditorTabs` and `InMemorySessionStore` in `TestSupport/` stand in for the two interfaces.
 
 `RealGitIntegrationTests` shells out to real `git` — a real checkout, a real detached HEAD, and a real
 linked worktree. The unit tests write HEAD themselves, which proves parsing but assumes how git
@@ -123,11 +172,17 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 
 - No coverage of the Visual Studio layer at all. `VsEditorTabs`, `RepositorySyncSession` and
   `GitTabSyncPackage` compile and package but **have never been run inside Visual Studio**. Treat
-  their behaviour as unverified.
+  their behaviour as unverified. This is the next thing that matters.
+- Options are read once, when a session starts. Changing them in Tools > Options does not affect the
+  open solution — there is no `DialogPage` change subscription.
+- `RepositorySyncSession.CheckForBranchChange()` and `ISessionStore.Delete` exist with no production
+  caller (only tests). They are hooks for work not done, not dead code to delete blindly.
 - Tab *order* is approximate: `IVsUIShell.GetDocumentWindowEnum` does not promise tab order, and
   restore reopens documents rather than rebuilding the layout. Split panes and tab groups are not
   captured. If layout fidelity becomes the goal, `IVsUIShellDocumentWindowMgr`
   (`SaveDocumentWindowPositions`/`ReopenDocumentWindows`) persists the real layout as an opaque blob —
   the tradeoff is losing the ability to filter out files missing on the target branch.
 - Open Folder mode is not handled; only solutions (`SolutionExists` autoload).
+- Only caret line/column are persisted per tab — no scroll position, selection or folding.
+- Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files behind.
 - Bookmarks and breakpoints, per the README's staging.
