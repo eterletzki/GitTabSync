@@ -41,6 +41,7 @@ namespace GitTabSync.Sync
                     IsRepositoryRelative = isRelative,
                     CaretLine = tab.CaretLine,
                     CaretColumn = tab.CaretColumn,
+                    IsPinned = tab.IsPinned,
                 });
             }
 
@@ -97,7 +98,7 @@ namespace GitTabSync.Sync
                     activeIndex = result.Count;
                 }
 
-                result.Add(new EditorTab(absolute, entry.CaretLine, entry.CaretColumn));
+                result.Add(new EditorTab(absolute, entry.CaretLine, entry.CaretColumn, entry.IsPinned));
             }
 
             return result;

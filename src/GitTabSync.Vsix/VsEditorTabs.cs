@@ -95,7 +95,7 @@ namespace GitTabSync
                 }
 
                 GetCaretPosition(frame, out var line, out var column);
-                result.Add(new EditorTab(path!, line, column));
+                result.Add(new EditorTab(path!, line, column, IsPinned(frame)));
             }
 
             return result;
@@ -180,6 +180,7 @@ namespace GitTabSync
                 }
 
                 frame.Show();
+                ApplyPinnedState(frame, tab.IsPinned);
                 RestoreCaretPosition(frame, tab);
                 return frame;
             }
@@ -187,6 +188,25 @@ namespace GitTabSync
             {
                 _log.Error("Failed to open " + tab.AbsolutePath + ".", e);
                 return null;
+            }
+        }
+
+        private static void ApplyPinnedState(IVsWindowFrame frame, bool pinned)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                // Set in both directions, never only when pinning. Documents open on both
+                // branches are deliberately left alone by CloseUnwantedDocuments, so a tab pinned
+                // on the outgoing branch would otherwise stay pinned on a branch that never
+                // pinned it.
+                frame.SetProperty((int)__VSFPROPID5.VSFPROPID_IsPinned, pinned);
+            }
+            catch (Exception)
+            {
+                // Frames that do not support pinning return a failure or throw; the tab itself is
+                // restored either way, which is the part that matters.
             }
         }
 
@@ -286,6 +306,25 @@ namespace GitTabSync
             catch (Exception)
             {
                 return true;
+            }
+        }
+
+        private static bool IsPinned(IVsWindowFrame frame)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                return frame.GetProperty((int)__VSFPROPID5.VSFPROPID_IsPinned, out var value) == VSConstants.S_OK
+                    && value is bool pinned
+                    && pinned;
+            }
+            catch (Exception)
+            {
+                // Unknown state is reported as unpinned, the opposite of IsDirty. Nothing is lost
+                // by guessing wrong here, while pinning a tab nobody pinned rearranges the tab
+                // well and stays that way until the user undoes it by hand.
+                return false;
             }
         }
 

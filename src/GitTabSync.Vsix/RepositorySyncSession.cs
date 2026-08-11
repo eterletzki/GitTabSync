@@ -1,5 +1,5 @@
 using System;
-using System.Threading;
+using EnvDTE;
 using GitTabSync.Git;
 using GitTabSync.Storage;
 using GitTabSync.Sync;
@@ -17,17 +17,31 @@ namespace GitTabSync
     internal sealed class RepositorySyncSession : IVsRunningDocTableEvents, IDisposable
     {
         /// <summary>
-        /// Document events arrive in bursts and while the document is still half-open or
-        /// half-closed. Capturing after a short quiet period reads a settled editor instead.
+        /// The command behind Window &gt; Pin Tab, the tab's pin glyph and the tab context menu.
         /// </summary>
-        private static readonly TimeSpan CaptureDelay = TimeSpan.FromMilliseconds(300);
+        /// <remarks>
+        /// Pinning changes no document, only a window frame property, so it raises no running
+        /// document table event: the command that performs it is the only notification there is.
+        /// The subscription is filtered to this one command, so nothing else in the IDE pays for
+        /// it.
+        /// </remarks>
+        private static readonly string PinTabCommandSet = VSConstants.CMDSETID.StandardCommandSet11_string;
+
+        private const int PinTabCommandId = (int)VSConstants.VSStd11CmdID.PinTab;
 
         private readonly BranchMonitor _monitor;
         private readonly TabSyncCoordinator _coordinator;
         private readonly IVsRunningDocumentTable? _runningDocumentTable;
-        private readonly Timer _captureTimer;
+        private readonly CaptureScheduler _captureScheduler;
         private readonly ITabSyncLog _log;
         private readonly uint _rdtCookie;
+
+        /// <summary>
+        /// Held for the lifetime of the session on purpose. A DTE event object stops raising
+        /// events as soon as nothing references it, so a local would unsubscribe itself at the
+        /// next collection.
+        /// </summary>
+        private readonly CommandEvents? _pinTabCommandEvents;
 
         private bool _disposed;
 
@@ -35,13 +49,14 @@ namespace GitTabSync
             BranchMonitor monitor,
             TabSyncCoordinator coordinator,
             IVsRunningDocumentTable? runningDocumentTable,
+            DTE? dte,
             ITabSyncLog log)
         {
             _monitor = monitor;
             _coordinator = coordinator;
             _runningDocumentTable = runningDocumentTable;
             _log = log;
-            _captureTimer = new Timer(_ => CaptureNow(), null, Timeout.Infinite, Timeout.Infinite);
+            _captureScheduler = new CaptureScheduler(coordinator.CaptureSnapshot, log: log);
 
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -49,6 +64,8 @@ namespace GitTabSync
             {
                 _runningDocumentTable.AdviseRunningDocTableEvents(this, out _rdtCookie);
             }
+
+            _pinTabCommandEvents = SubscribeToPinTab(dte);
         }
 
         /// <summary>
@@ -78,7 +95,8 @@ namespace GitTabSync
                 repository, monitor, new FileSessionStore(), editor, options, log);
 
             var runningDocumentTable = serviceProvider.GetService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
-            var session = new RepositorySyncSession(monitor, coordinator, runningDocumentTable, log);
+            var dte = serviceProvider.GetService(typeof(SDTE)) as DTE;
+            var session = new RepositorySyncSession(monitor, coordinator, runningDocumentTable, dte, log);
 
             coordinator.Start();
             return session;
@@ -89,39 +107,52 @@ namespace GitTabSync
 
         public void SaveCurrentSession() => _coordinator.SaveCurrentSession();
 
-        private void ScheduleCapture()
+        private CommandEvents? SubscribeToPinTab(DTE? dte)
         {
-            if (_disposed)
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (dte is null)
             {
-                return;
+                _log.Info("DTE is unavailable; pinning a tab will only be noticed at the next document event.");
+                return null;
             }
 
             try
             {
-                _captureTimer.Change(CaptureDelay, Timeout.InfiniteTimeSpan);
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        }
+                var events = dte.Events.CommandEvents[PinTabCommandSet, PinTabCommandId];
+                if (events is null)
+                {
+                    _log.Info("The Pin Tab command could not be subscribed to; pinning a tab will only be "
+                        + "noticed at the next document event.");
+                    return null;
+                }
 
-        private void CaptureNow()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            try
-            {
-                _coordinator.CaptureSnapshot();
+                events.AfterExecute += OnPinTabExecuted;
+                return events;
             }
             catch (Exception e)
             {
-                // Runs on a timer thread; an escape would take Visual Studio down.
-                _log.Error("Failed to capture the open documents.", e);
+                _log.Error("Failed to subscribe to the Pin Tab command.", e);
+                return null;
             }
         }
+
+        private void OnPinTabExecuted(string guid, int id, object customIn, object customOut)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            // Captured straight away rather than through the debounce. That delay exists for
+            // document events, which arrive in bursts while a document is still half-open; a pin
+            // is one settled action, and the delay is exactly what would lose it to a branch
+            // switch made a moment later.
+            _log.Info("A tab was pinned or unpinned; capturing the open documents now.");
+            _captureScheduler.CaptureNow();
+        }
+
+        private void ScheduleCapture() => _captureScheduler.Schedule();
 
         public int OnAfterFirstDocumentLock(uint docCookie, uint lockType, uint readLocksRemaining, uint editLocksRemaining)
         {
@@ -163,12 +194,17 @@ namespace GitTabSync
 
             ThreadHelper.ThrowIfNotOnUIThread();
 
+            if (_pinTabCommandEvents is not null)
+            {
+                _pinTabCommandEvents.AfterExecute -= OnPinTabExecuted;
+            }
+
             if (_runningDocumentTable is not null && _rdtCookie != 0)
             {
                 _runningDocumentTable.UnadviseRunningDocTableEvents(_rdtCookie);
             }
 
-            _captureTimer.Dispose();
+            _captureScheduler.Dispose();
             _coordinator.Dispose();
             _monitor.Dispose();
         }

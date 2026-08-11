@@ -29,5 +29,15 @@ namespace GitTabSync.Model
         /// <summary>1-based caret column, or 0 when unknown.</summary>
         [DataMember(Name = "column", Order = 3)]
         public int CaretColumn { get; set; }
+
+        /// <summary>True when the tab was pinned.</summary>
+        /// <remarks>
+        /// Added after the first release without bumping
+        /// <see cref="TabSession.CurrentSchemaVersion"/>: an appended optional member is compatible
+        /// both ways. Sessions written before it deserialise as unpinned, and an older build
+        /// ignores the member rather than failing to read the file.
+        /// </remarks>
+        [DataMember(Name = "pinned", Order = 4)]
+        public bool IsPinned { get; set; }
     }
 }

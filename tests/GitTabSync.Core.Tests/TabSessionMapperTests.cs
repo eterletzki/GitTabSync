@@ -61,6 +61,26 @@ namespace GitTabSync.Tests
         }
 
         [Fact]
+        public void The_pinned_state_survives_a_round_trip()
+        {
+            var original = new[]
+            {
+                new EditorTab(@"C:\src\MyRepo\A.cs", isPinned: true),
+                new EditorTab(@"C:\src\MyRepo\B.cs"),
+            };
+
+            var session = TabSessionMapper.ToSession(original, 0, Repo, "branch/main", SavedAt);
+
+            Assert.True(session.Tabs[0].IsPinned);
+            Assert.False(session.Tabs[1].IsPinned);
+
+            var restored = TabSessionMapper.ToEditorTabs(session, Repo, out _, _ => true);
+
+            Assert.True(restored[0].IsPinned);
+            Assert.False(restored[1].IsPinned);
+        }
+
+        [Fact]
         public void An_out_of_range_active_index_becomes_none()
         {
             var tabs = new[] { new EditorTab(@"C:\src\MyRepo\A.cs") };

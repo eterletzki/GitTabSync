@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 82 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 118 passing tests, including tests that drive the real `git` executable. |
 | Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
@@ -102,6 +102,16 @@ open/close/activate events — and saves *that* against the outgoing branch, nev
 switch time. Its own restores are excluded from the snapshot, so a half-applied state can never be
 mistaken for what you had open.
 
+Pinning a tab is the one thing that produces no document event at all — it changes no document,
+only a window property — so the snapshot's idea of what is pinned can be arbitrarily out of date.
+The pinned state is therefore re-read from the editor at the moment a session is written, for the
+documents still open, rather than taken from the snapshot. Pinning a tab and switching branches an
+instant later keeps the pin, because nothing had to notice the pin in the meantime.
+
+Which tabs are saved, and in what order, still comes from the snapshot alone — that is the whole
+point of keeping one. A document the editor has already closed keeps the pinned state it was last
+known to have, and a document the checkout has opened since is ignored.
+
 Sessions are also saved when the solution closes and when Visual Studio shuts down, since neither
 produces a branch change to react to.
 
@@ -119,6 +129,9 @@ On switching to a branch, the stored session for the incoming branch is applied:
   determined, the document is assumed dirty.
 - **Caret position is restored** where it can be, and silently skipped where it cannot (the file may
   be shorter on this branch).
+- **Pinned tabs are restored pinned**, and tabs that were not pinned on the incoming branch are
+  unpinned — pin state belongs to the branch, so a tab pinned on one branch does not stay pinned
+  after you switch to a branch that never pinned it.
 - **Branches with no stored session leave your tabs alone** by default — see [Settings](#settings).
 
 Storage and restore failures are logged rather than thrown: losing a remembered tab set is a much
@@ -148,8 +161,8 @@ A session file:
 
 ```json
 {"schema":1,"head":"branch\/main","savedAtUtc":"2026-08-09T10:14:32.1174820Z","activeIndex":1,
- "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9},
-         {"path":"README.md","relative":true,"line":1,"column":1}]}
+ "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9,"pinned":true},
+         {"path":"README.md","relative":true,"line":1,"column":1,"pinned":false}]}
 ```
 
 Paths inside the repository are stored relative with `/` separators, so sessions survive the
@@ -190,7 +203,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 82 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 118 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -233,6 +246,14 @@ real linked worktree. The unit tests write HEAD themselves, which proves the par
 git updates the file; only these prove the watcher is subscribed to the events that actually fire.
 They skip when git is not on PATH.
 
+`CaptureSchedulerTests` and `BranchMonitorTests.Timing` cover the waits — the 250 ms branch
+debounce, the 5 s poll, the 300 ms capture debounce, and the pin path that skips it. They run
+against real timers for the same reason the rest run against real files: the thing under test *is*
+elapsed time, and a fake clock would prove only that the arithmetic is right. Each test disables
+one detector so the other has to do the work, and the assertions are one-sided — "not yet" at a
+fraction of the delay, "eventually" with ten seconds of headroom — so a loaded machine is allowed
+to be slow without being reported as broken.
+
 ## Troubleshooting
 
 The extension acts without being asked, so when it does something surprising the log is the way to
@@ -254,8 +275,12 @@ did not load — check **Extensions → Manage Extensions**.
 - **Open Folder mode is not handled** — the extension loads on `SolutionExists` only.
 - **Documents without a file on disk are ignored** — designers, option pages and unsaved new files
   have nothing that could be reopened on another branch.
-- Only the caret line and column are remembered per tab; scroll position, selection and folding are
-  not.
+- Only the caret line and column and the pinned state are remembered per tab; scroll position,
+  selection and folding are not.
+- **Pinning is never reported by Visual Studio**, so the pinned state is re-read when a session is
+  written rather than tracked as it changes. The one case that cannot be recovered: pinning a tab
+  and then switching to a branch on which that file does not exist, since Visual Studio closes the
+  tab before the session is written and the last known state is all that is left.
 
 ## Roadmap
 
