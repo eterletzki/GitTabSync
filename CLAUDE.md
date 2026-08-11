@@ -88,6 +88,10 @@ Meanwhile, independently: RDT document events → `RepositorySyncSession.Schedul
 debounce, because events arrive in bursts while documents are still half-open) →
 `TabSyncCoordinator.CaptureSnapshot` → reads the editor and replaces the snapshot.
 
+The Pin Tab command feeds the same capture but **skips the debounce** — one settled action rather
+than a burst, and the delay is precisely what would lose a pin to a branch switch made right after
+it.
+
 ### The two constraints that shape everything
 
 **1. Branch changes originate outside Visual Studio.** This is the problem the project exists for.
@@ -185,11 +189,11 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - Open Folder mode is not handled; only solutions (`SolutionExists` autoload).
 - Only caret line/column and pinned state are persisted per tab — no scroll position, selection or
   folding.
-- **Nothing notifies the extension that a tab was pinned.** Pin state is a frame property
-  (`__VSFPROPID5.VSFPROPID_IsPinned`), and toggling it raises no RDT document event; `IVsWindowFrameEvents`
-  1/2/3 have no pin callback either. So the snapshot only picks a pin up on the next document
-  event (any tab click). Pinning and immediately switching branches externally loses the pin for
-  that branch. The only complete fix is a slow periodic `CaptureSnapshot`; not worth it until it
-  proves annoying.
+- **The Pin Tab command subscription is unverified.** Pin state is a frame property
+  (`__VSFPROPID5.VSFPROPID_IsPinned`); toggling it raises no RDT document event, and
+  `IVsWindowFrameEvents` 1/2/3 have no pin callback, so `RepositorySyncSession` subscribes to the
+  command itself (`VSStd11CmdID.PinTab`, filtered — DTE also allows an unfiltered subscription
+  that fires for every command in the IDE, which is what to fall back to if the filtered one turns
+  out not to fire). It has never been observed firing. The log line it writes is how to tell.
 - Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files behind.
 - Bookmarks and breakpoints, per the README's staging.

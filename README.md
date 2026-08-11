@@ -102,6 +102,10 @@ open/close/activate events — and saves *that* against the outgoing branch, nev
 switch time. Its own restores are excluded from the snapshot, so a half-applied state can never be
 mistaken for what you had open.
 
+Pinning a tab is the one thing that produces no document event at all, so the extension listens for
+the Pin Tab command itself and refreshes the snapshot immediately, without the short delay the
+document events go through. Pinning a tab and switching branches a moment later keeps the pin.
+
 Sessions are also saved when the solution closes and when Visual Studio shuts down, since neither
 produces a branch change to react to.
 
@@ -259,9 +263,10 @@ did not load — check **Extensions → Manage Extensions**.
   have nothing that could be reopened on another branch.
 - Only the caret line and column and the pinned state are remembered per tab; scroll position,
   selection and folding are not.
-- **Pinning a tab raises no event the extension can hear.** The snapshot is refreshed from document
-  open/close/activate events, and pinning is none of those, so a tab pinned immediately before an
-  external branch switch may be saved as unpinned. Clicking any other tab first captures it.
+- **Pinning is noticed through the Pin Tab command, not a document event.** Pinning changes no
+  document, so nothing in the running document table reports it; the extension subscribes to the
+  command instead. Anything that changes pin state without going through that command would not be
+  seen until the next document event.
 
 ## Roadmap
 
