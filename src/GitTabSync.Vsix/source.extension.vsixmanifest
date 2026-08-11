@@ -2,7 +2,7 @@
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Id="GitTabSync.9f2c1d64-5f7a-4a3b-8c2e-6d4b0e1a7c53"
-              Version="0.1.0"
+              Version="1.0.0"
               Language="en-US"
               Publisher="Erik Terletzki" />
     <DisplayName>Git Tab Sync</DisplayName>
