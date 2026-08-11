@@ -119,6 +119,9 @@ On switching to a branch, the stored session for the incoming branch is applied:
   determined, the document is assumed dirty.
 - **Caret position is restored** where it can be, and silently skipped where it cannot (the file may
   be shorter on this branch).
+- **Pinned tabs are restored pinned**, and tabs that were not pinned on the incoming branch are
+  unpinned — pin state belongs to the branch, so a tab pinned on one branch does not stay pinned
+  after you switch to a branch that never pinned it.
 - **Branches with no stored session leave your tabs alone** by default — see [Settings](#settings).
 
 Storage and restore failures are logged rather than thrown: losing a remembered tab set is a much
@@ -148,8 +151,8 @@ A session file:
 
 ```json
 {"schema":1,"head":"branch\/main","savedAtUtc":"2026-08-09T10:14:32.1174820Z","activeIndex":1,
- "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9},
-         {"path":"README.md","relative":true,"line":1,"column":1}]}
+ "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9,"pinned":true},
+         {"path":"README.md","relative":true,"line":1,"column":1,"pinned":false}]}
 ```
 
 Paths inside the repository are stored relative with `/` separators, so sessions survive the
@@ -190,7 +193,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 82 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 86 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -254,8 +257,11 @@ did not load — check **Extensions → Manage Extensions**.
 - **Open Folder mode is not handled** — the extension loads on `SolutionExists` only.
 - **Documents without a file on disk are ignored** — designers, option pages and unsaved new files
   have nothing that could be reopened on another branch.
-- Only the caret line and column are remembered per tab; scroll position, selection and folding are
-  not.
+- Only the caret line and column and the pinned state are remembered per tab; scroll position,
+  selection and folding are not.
+- **Pinning a tab raises no event the extension can hear.** The snapshot is refreshed from document
+  open/close/activate events, and pinning is none of those, so a tab pinned immediately before an
+  external branch switch may be saved as unpinned. Clicking any other tab first captures it.
 
 ## Roadmap
 

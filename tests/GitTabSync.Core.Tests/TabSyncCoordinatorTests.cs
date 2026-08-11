@@ -223,6 +223,26 @@ namespace GitTabSync.Tests
         }
 
         [Fact]
+        public void A_pinned_tab_comes_back_pinned()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+
+            _editor.SetOpen(new EditorTab(a, isPinned: true), new EditorTab(b));
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            SwitchTo("feature");
+            _editor.SetOpen(b);
+            coordinator.CaptureSnapshot();
+
+            SwitchTo("main");
+
+            Assert.True(_editor.Open.Single(t => t.AbsolutePath == a).IsPinned);
+            Assert.False(_editor.Open.Single(t => t.AbsolutePath == b).IsPinned);
+        }
+
+        [Fact]
         public void Nothing_is_saved_when_the_previous_head_was_never_known()
         {
             File.WriteAllText(_headPath, string.Empty);

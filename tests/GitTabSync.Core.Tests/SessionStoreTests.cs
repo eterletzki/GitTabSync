@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using GitTabSync.Model;
 using GitTabSync.Storage;
 using GitTabSync.Tests.TestSupport;
@@ -38,6 +39,49 @@ namespace GitTabSync.Tests
             Assert.Equal(12, loaded.Tabs[0].CaretLine);
             Assert.Equal(3, loaded.Tabs[0].CaretColumn);
             Assert.False(loaded.Tabs[1].IsRepositoryRelative);
+        }
+
+        [Fact]
+        public void Round_trips_the_pinned_state()
+        {
+            using var temp = new TempDirectory();
+            var store = new FileSessionStore(temp.Path);
+
+            store.Save(@"C:\repo", new TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs =
+                {
+                    new TabEntry { Path = "src/Pinned.cs", IsRepositoryRelative = true, IsPinned = true },
+                    new TabEntry { Path = "src/Loose.cs", IsRepositoryRelative = true },
+                },
+            });
+
+            var loaded = store.Load(@"C:\repo", "branch/main");
+
+            Assert.True(loaded!.Tabs[0].IsPinned);
+            Assert.False(loaded.Tabs[1].IsPinned);
+        }
+
+        [Fact]
+        public void A_session_written_before_pinning_existed_loads_as_unpinned()
+        {
+            using var temp = new TempDirectory();
+            var store = new FileSessionStore(temp.Path);
+            store.Save(@"C:\repo", new TabSession { HeadKey = "branch/main" });
+
+            // "pinned" was appended to the tab contract without bumping the schema version, so
+            // files written by an earlier build must still load rather than being discarded.
+            File.WriteAllText(
+                store.GetSessionFilePath(@"C:\repo", "branch/main"),
+                @"{""schema"":1,""head"":""branch\/main"",""savedAtUtc"":""2026-08-09T10:14:32.1174820Z"",""activeIndex"":0,"
+                    + @"""tabs"":[{""path"":""src\/A.cs"",""relative"":true,""line"":42,""column"":9}]}");
+
+            var loaded = store.Load(@"C:\repo", "branch/main");
+
+            Assert.Equal("src/A.cs", loaded!.Tabs.Single().Path);
+            Assert.Equal(42, loaded.Tabs[0].CaretLine);
+            Assert.False(loaded.Tabs[0].IsPinned);
         }
 
         [Fact]

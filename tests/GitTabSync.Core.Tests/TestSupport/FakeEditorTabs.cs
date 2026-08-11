@@ -24,6 +24,11 @@ namespace GitTabSync.Tests.TestSupport
             _open = paths.Select(p => new EditorTab(p)).ToList();
         }
 
+        public void SetOpen(params EditorTab[] tabs)
+        {
+            _open = tabs.ToList();
+        }
+
         public IReadOnlyList<EditorTab> GetOpenTabs() => _open.ToList();
 
         public int GetActiveTabIndex() => ActiveIndex;

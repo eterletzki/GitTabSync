@@ -9,11 +9,12 @@ namespace GitTabSync.Sync
     /// </remarks>
     public sealed class EditorTab
     {
-        public EditorTab(string absolutePath, int caretLine = 0, int caretColumn = 0)
+        public EditorTab(string absolutePath, int caretLine = 0, int caretColumn = 0, bool isPinned = false)
         {
             AbsolutePath = absolutePath;
             CaretLine = caretLine;
             CaretColumn = caretColumn;
+            IsPinned = isPinned;
         }
 
         public string AbsolutePath { get; }
@@ -23,6 +24,12 @@ namespace GitTabSync.Sync
 
         /// <summary>1-based caret column, or 0 when unknown.</summary>
         public int CaretColumn { get; }
+
+        /// <summary>
+        /// True when the document's tab is pinned. Unknown pin state is reported as false: a tab
+        /// wrongly pinned on restore is a visible, sticky change to a layout nobody asked for.
+        /// </summary>
+        public bool IsPinned { get; }
 
         public override string ToString() => AbsolutePath;
     }

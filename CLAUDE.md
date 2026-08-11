@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 82 tests, incl. real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 86 tests, incl. real-`git` integration tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -82,7 +82,7 @@ logic belongs in Core with a test; only shell plumbing belongs in the VSIX.
 `BranchChanged` on a **timer thread** → `TabSyncCoordinator.OnBranchChanged` saves the *stored
 snapshot* under the outgoing head, then loads the incoming head's session, drops entries whose files
 are missing, and calls `IEditorTabs.ApplyTabs` → `VsEditorTabs` marshals to the UI thread, closes
-what is not wanted (never a dirty document), opens the rest, restores carets.
+what is not wanted (never a dirty document), opens the rest, applies pin state and restores carets.
 
 Meanwhile, independently: RDT document events → `RepositorySyncSession.ScheduleCapture` (300 ms
 debounce, because events arrive in bursts while documents are still half-open) →
@@ -183,6 +183,13 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
   (`SaveDocumentWindowPositions`/`ReopenDocumentWindows`) persists the real layout as an opaque blob —
   the tradeoff is losing the ability to filter out files missing on the target branch.
 - Open Folder mode is not handled; only solutions (`SolutionExists` autoload).
-- Only caret line/column are persisted per tab — no scroll position, selection or folding.
+- Only caret line/column and pinned state are persisted per tab — no scroll position, selection or
+  folding.
+- **Nothing notifies the extension that a tab was pinned.** Pin state is a frame property
+  (`__VSFPROPID5.VSFPROPID_IsPinned`), and toggling it raises no RDT document event; `IVsWindowFrameEvents`
+  1/2/3 have no pin callback either. So the snapshot only picks a pin up on the next document
+  event (any tab click). Pinning and immediately switching branches externally loses the pin for
+  that branch. The only complete fix is a slow periodic `CaptureSnapshot`; not worth it until it
+  proves annoying.
 - Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files behind.
 - Bookmarks and breakpoints, per the README's staging.
