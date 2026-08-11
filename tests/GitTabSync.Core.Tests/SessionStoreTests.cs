@@ -198,17 +198,24 @@ namespace GitTabSync.Tests
         }
 
         [Fact]
-        public void Sessions_are_stored_outside_the_repository()
+        public void The_default_storage_root_is_outside_the_repository()
         {
             using var repo = new TempDirectory("repo");
-            using var storage = new TempDirectory("store");
-            var store = new FileSessionStore(storage.Path);
 
-            store.Save(repo.Path, new TabSession { HeadKey = "branch/main" });
+            // No root override: every other test here hands the store a temp directory, which is
+            // exactly the configuration that never ships. The claim being pinned is about the
+            // default, so the default is what has to be constructed.
+            var store = new FileSessionStore();
 
-            // Anything written inside the working tree would be rewritten by the very checkout
-            // the session exists to survive, and would show up as a pending change.
-            Assert.Empty(Directory.GetFileSystemEntries(repo.Path));
+            var path = Path.GetFullPath(store.GetSessionFilePath(repo.Path, "branch/main"));
+
+            // Anything written inside the working tree would be rewritten by the very checkout the
+            // session exists to survive, and would show up as a pending change on every switch.
+            Assert.DoesNotContain(Path.GetFullPath(repo.Path), path, StringComparison.OrdinalIgnoreCase);
+            Assert.StartsWith(
+                Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+                path,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         public sealed class Keys

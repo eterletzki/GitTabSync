@@ -14,13 +14,32 @@ namespace GitTabSync.Tests.TestSupport
 
         public IReadOnlyDictionary<string, TabSession> Sessions => _sessions;
 
+        /// <summary>
+        /// When set, <see cref="Load"/> throws it — a session file the user's disk, antivirus or
+        /// roaming profile made unreadable at the worst possible moment.
+        /// </summary>
+        public Exception? FailOnLoad { get; set; }
+
+        /// <summary>When set, <see cref="Save"/> throws it.</summary>
+        public Exception? FailOnSave { get; set; }
+
         public TabSession? Load(string repositoryWorkingDirectory, string headKey)
         {
+            if (FailOnLoad is not null)
+            {
+                throw FailOnLoad;
+            }
+
             return _sessions.TryGetValue(Key(repositoryWorkingDirectory, headKey), out var session) ? session : null;
         }
 
         public void Save(string repositoryWorkingDirectory, TabSession session)
         {
+            if (FailOnSave is not null)
+            {
+                throw FailOnSave;
+            }
+
             SaveCount++;
             _sessions[Key(repositoryWorkingDirectory, session.HeadKey)] = session;
         }
