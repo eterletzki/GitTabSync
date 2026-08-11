@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using EnvDTE;
 using GitTabSync.Git;
 using GitTabSync.Storage;
@@ -18,12 +17,6 @@ namespace GitTabSync
     internal sealed class RepositorySyncSession : IVsRunningDocTableEvents, IDisposable
     {
         /// <summary>
-        /// Document events arrive in bursts and while the document is still half-open or
-        /// half-closed. Capturing after a short quiet period reads a settled editor instead.
-        /// </summary>
-        private static readonly TimeSpan CaptureDelay = TimeSpan.FromMilliseconds(300);
-
-        /// <summary>
         /// The command behind Window &gt; Pin Tab, the tab's pin glyph and the tab context menu.
         /// </summary>
         /// <remarks>
@@ -39,7 +32,7 @@ namespace GitTabSync
         private readonly BranchMonitor _monitor;
         private readonly TabSyncCoordinator _coordinator;
         private readonly IVsRunningDocumentTable? _runningDocumentTable;
-        private readonly Timer _captureTimer;
+        private readonly CaptureScheduler _captureScheduler;
         private readonly ITabSyncLog _log;
         private readonly uint _rdtCookie;
 
@@ -63,7 +56,7 @@ namespace GitTabSync
             _coordinator = coordinator;
             _runningDocumentTable = runningDocumentTable;
             _log = log;
-            _captureTimer = new Timer(_ => CaptureNow(), null, Timeout.Infinite, Timeout.Infinite);
+            _captureScheduler = new CaptureScheduler(coordinator.CaptureSnapshot, log: log);
 
             ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -156,42 +149,10 @@ namespace GitTabSync
             // is one settled action, and the delay is exactly what would lose it to a branch
             // switch made a moment later.
             _log.Info("A tab was pinned or unpinned; capturing the open documents now.");
-            CaptureNow();
+            _captureScheduler.CaptureNow();
         }
 
-        private void ScheduleCapture()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            try
-            {
-                _captureTimer.Change(CaptureDelay, Timeout.InfiniteTimeSpan);
-            }
-            catch (ObjectDisposedException)
-            {
-            }
-        }
-
-        private void CaptureNow()
-        {
-            if (_disposed)
-            {
-                return;
-            }
-
-            try
-            {
-                _coordinator.CaptureSnapshot();
-            }
-            catch (Exception e)
-            {
-                // Runs on a timer thread; an escape would take Visual Studio down.
-                _log.Error("Failed to capture the open documents.", e);
-            }
-        }
+        private void ScheduleCapture() => _captureScheduler.Schedule();
 
         public int OnAfterFirstDocumentLock(uint docCookie, uint lockType, uint readLocksRemaining, uint editLocksRemaining)
         {
@@ -243,7 +204,7 @@ namespace GitTabSync
                 _runningDocumentTable.UnadviseRunningDocTableEvents(_rdtCookie);
             }
 
-            _captureTimer.Dispose();
+            _captureScheduler.Dispose();
             _coordinator.Dispose();
             _monitor.Dispose();
         }

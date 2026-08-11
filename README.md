@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 82 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 101 passing tests, including tests that drive the real `git` executable. |
 | Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
@@ -197,7 +197,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 86 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 101 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -239,6 +239,14 @@ Tests use real temp directories rather than a mocked filesystem, because the beh
 real linked worktree. The unit tests write HEAD themselves, which proves the parsing but assumes how
 git updates the file; only these prove the watcher is subscribed to the events that actually fire.
 They skip when git is not on PATH.
+
+`CaptureSchedulerTests` and `BranchMonitorTests.Timing` cover the waits — the 250 ms branch
+debounce, the 5 s poll, the 300 ms capture debounce, and the pin path that skips it. They run
+against real timers for the same reason the rest run against real files: the thing under test *is*
+elapsed time, and a fake clock would prove only that the arithmetic is right. Each test disables
+one detector so the other has to do the work, and the assertions are one-sided — "not yet" at a
+fraction of the delay, "eventually" with ten seconds of headroom — so a loaded machine is allowed
+to be slow without being reported as broken.
 
 ## Troubleshooting
 

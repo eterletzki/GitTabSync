@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 86 tests, incl. real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 101 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -67,7 +67,7 @@ Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity),
 Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
 Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal)
 Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
-                TabSyncOptions, ITabSyncLog
+                CaptureScheduler (when the editor is read), TabSyncOptions, ITabSyncLog
 Vsix/           GitTabSyncPackage (autoload + solution events), RepositorySyncSession (RDT
                 subscription, one per open repo), VsEditorTabs (the only file touching editor
                 windows), GitTabSyncOptionsPage, OutputWindowLog
@@ -84,13 +84,32 @@ snapshot* under the outgoing head, then loads the incoming head's session, drops
 are missing, and calls `IEditorTabs.ApplyTabs` → `VsEditorTabs` marshals to the UI thread, closes
 what is not wanted (never a dirty document), opens the rest, applies pin state and restores carets.
 
-Meanwhile, independently: RDT document events → `RepositorySyncSession.ScheduleCapture` (300 ms
-debounce, because events arrive in bursts while documents are still half-open) →
-`TabSyncCoordinator.CaptureSnapshot` → reads the editor and replaces the snapshot.
+Meanwhile, independently: RDT document events → `RepositorySyncSession.ScheduleCapture` →
+`CaptureScheduler.Schedule` (300 ms debounce, because events arrive in bursts while documents are
+still half-open) → `TabSyncCoordinator.CaptureSnapshot` → reads the editor and replaces the
+snapshot.
 
-The Pin Tab command feeds the same capture but **skips the debounce** — one settled action rather
-than a burst, and the delay is precisely what would lose a pin to a branch switch made right after
-it.
+The Pin Tab command calls `CaptureScheduler.CaptureNow` instead, which **skips the debounce** — one
+settled action rather than a burst, and the delay is precisely what would lose a pin to a branch
+switch made right after it.
+
+### Delays, and where they are tested
+
+Every wait in the system is deliberate, and each one is pinned by a test against real timers
+(`CaptureSchedulerTests`, `BranchMonitorTests.Timing`) — a fake clock would prove only that the
+arithmetic is right. `CaptureScheduler` lives in Core rather than the VSIX for exactly this reason:
+timing logic that cannot be tested is timing logic that drifts.
+
+| Wait | Where | Why |
+|---|---|---|
+| 250 ms | `BranchMonitor.DefaultDebounce` | One checkout touches HEAD several times; the intermediate values are real but meaningless. |
+| 5 s | `BranchMonitor.DefaultPollInterval` | Safety net for a watcher that dropped its events. Checks directly, without the debounce. |
+| 300 ms | `CaptureScheduler.DefaultDelay` | Document events arrive while the document is still half-open. |
+| none | `CaptureScheduler.CaptureNow` | The Pin Tab command. Waiting is what loses the pin.  |
+
+The tests are one-sided on purpose: "not yet" is asserted at a fraction of the delay, "eventually"
+waits ten seconds. A loaded machine is allowed to be slow, not wrong. If you change a number, the
+first test in `CaptureSchedulerTests` fails until the docs above agree with the code.
 
 ### The two constraints that shape everything
 
