@@ -138,15 +138,7 @@ namespace GitTabSync.Storage
             return Path.Combine(_rootDirectory, "repos", repositoryKey, fileName);
         }
 
-        private static bool IsRecoverableStorageFailure(Exception e)
-        {
-            return e is IOException
-                || e is UnauthorizedAccessException
-                || e is System.Runtime.Serialization.SerializationException
-                || e is System.Xml.XmlException
-                || e is ArgumentException
-                || e is NotSupportedException;
-        }
+        private static bool IsRecoverableStorageFailure(Exception e) => RecoverableStorageFailure.Matches(e);
 
         /// <summary>
         /// Serialises a session to a JSON string. Exposed for diagnostics and tests.

@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 118 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 164 passing tests, including tests that drive the real `git` executable. |
 | Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
@@ -203,7 +203,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 118 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 164 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -289,5 +289,8 @@ did not load — check **Extensions → Manage Extensions**.
 2. Higher-fidelity layout, if it proves worth it. `IVsUIShellDocumentWindowMgr`
    (`SaveDocumentWindowPositions` / `ReopenDocumentWindows`) persists the real layout as an opaque
    blob — the tradeoff is losing the ability to filter out files missing on the target branch.
-3. Open Folder support.
-4. Bookmarks, then breakpoints.
+3. A settings window with per-branch scope — the cascade (defaults → repository → branch →
+   solution → project) is implemented and tested in the core; nothing in the extension can set one
+   yet.
+4. Open Folder support.
+5. Bookmarks, then breakpoints — reachable from the settings above once they exist.

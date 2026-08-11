@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 118 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 164 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -65,7 +65,11 @@ VSIX and the modern test project.
 ```
 Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity), BranchMonitor
 Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
-Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal)
+Core/Settings/  SyncSetting + SyncSettingCatalog (names/defaults), SettingScope(Kind), SyncContext
+                (the cascade), ScopedSettings (persisted), ISettingsStore/FileSettingsStore,
+                ISyncSettings, SettingsResolver, ResolvedSetting
+Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal),
+                RecoverableStorageFailure (internal, shared swallow policy)
 Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
                 CaptureScheduler (when the editor is read), TabSyncOptions, ITabSyncLog
 Vsix/           GitTabSyncPackage (autoload + solution events), RepositorySyncSession (RDT
@@ -146,6 +150,52 @@ pointedly *not* refreshed the same way: a checkout reloads changed files and can
 the live value there may be worse than the snapshot's. Three tests in `TabSyncCoordinatorTests`
 hold this line — if you widen the refresh beyond the pinned flag, they are the ones that will fail,
 and they are right.
+
+### Scoped settings
+
+Settings cascade over five levels. A branch is the unit settings reach over; solution and project
+narrow *within* a branch rather than standing beside it, so a project override is a statement about
+that project **on that branch**.
+
+| Asked | Scope | Key |
+|---|---|---|
+| 1st | `Project` | `branch/release/1.0.1｜src/…/Core.csproj` |
+| 2nd | `Solution` | `branch/release/1.0.1｜GitTabSync.slnx` |
+| 3rd | **`Branch`** | `branch/release/1.0.1` — the default granularity |
+| 4th | `Repository` | (one settings file per repo, so no key) |
+| 5th | `Global` | the defaults |
+
+Three things here are load-bearing.
+
+**Absence is the third state.** A stored override is present or it is not; there is no `false`
+meaning "unset". "Off here" and "not set here" have to stay distinguishable or the cascade collapses
+into whichever level was written last. `SettingsResolver.Set(scope, setting, null)` clears, `Resolve`
+returns the built-in default with `IsExplicit = false`, and several tests in `SettingsResolverTests`
+exist only to hold that line — `Off_at_a_narrow_scope_survives_on_at_a_broad_one` and
+`A_value_set_to_the_same_as_the_default_is_still_explicit` are the two that matter.
+
+**Settings are resolved per decision, never held.** `TabSyncCoordinator` takes an `ISyncSettings` and
+calls it with a `SyncContext` built from *the head that decision is about*. Resolving once and
+keeping the answer is not a performance question: `OnBranchChanged` is the one code path where the
+outgoing and incoming heads are guaranteed to differ, so a held answer applies the wrong branch's
+configuration on every switch. `Settings_are_resolved_at_each_switch_not_captured_when_the_session_starts`
+is the test; it changes a setting mid-session from another branch and expects the next switch to obey.
+
+**Scope identity follows the same case split as `StorageKey`.** Head keys compare case-*sensitively*
+(git refs), paths case-*insensitively* (Windows). `SettingScope` lower-cases the path half of its key
+at construction so ordinal comparison is the whole rule afterwards.
+
+Storage: defaults in `%LOCALAPPDATA%\GitTabSync\settings.json`, everything else in
+`repos\<repo-key>\settings.json` beside the sessions. The split is enforced on load as well as on
+save — a `Branch` scope hand-written into the defaults file is ignored, or one repository's branch
+override would apply to every repository with a branch of that name. Scope kinds and setting names
+are stored as text, never as enum ordinals, so the enums can be reordered; an unrecognised value is
+skipped rather than guessed at.
+
+`TabSyncOptions` now implements `ISyncSettings` as the degenerate zero-scope case — one answer
+everywhere, ignoring the context. That is what Tools > Options can express and what the VSIX still
+passes. It exists to keep the shell compiling until the settings UI lands, and has nothing left to do
+afterwards.
 
 ### Decisions worth knowing before changing them
 
@@ -252,8 +302,25 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - No coverage of the Visual Studio layer at all. `VsEditorTabs`, `RepositorySyncSession` and
   `GitTabSyncPackage` compile and package but **have never been run inside Visual Studio**. Treat
   their behaviour as unverified. This is the next thing that matters.
-- Options are read once, when a session starts. Changing them in Tools > Options does not affect the
-  open solution — there is no `DialogPage` change subscription.
+- **Nothing in the VSIX can set a scope yet.** `SettingsResolver` is fully tested but has no
+  production caller: `GitTabSyncPackage` still reads the `DialogPage` once into a flat
+  `TabSyncOptions` and passes that, so from a user's point of view settings are still global and
+  still read once — changing them in Tools > Options does not affect the open solution. Core
+  resolving per decision removes the *correctness* half of that gap, not the UI half. The tool
+  window is what closes it.
+- **`SyncBookmarks` and `SyncBreakpoints` are defined but read by nothing.** They exist so the
+  storage format does not have to change when the features land; `SettingsStoreTests` proves they
+  round-trip. Do not expose them in a UI before the features exist — a toggle wired to nothing is
+  indistinguishable from a broken one.
+- **Solution and project scopes resolve but are never supplied.** `SyncContext` accepts and orders
+  them, and `SettingsResolverTests` covers all five levels, but `TabSyncCoordinator.ContextFor`
+  builds a branch-level context because nothing attributes a document to its owning project. Making
+  those two levels reachable means `EditorTab.ProjectPath`, a `TabEntry` member at `Order = 5` (the
+  `pinned` member is the precedent for appending without a schema bump), an `IVsHierarchy` lookup in
+  `VsEditorTabs`, and a rule for documents owned by no project and for linked/shared files owned by
+  several. It also makes a stored session a *partial* record, so `CloseTabsWhenBranchHasNoSession`
+  must then leave excluded projects' tabs alone — that needs its own test before the feature is
+  believable.
 - **`GitRepository.ReadHead`'s retry loop is untested**, and cannot be tested honestly as written:
   5 attempts × 20 ms hard-codes a ~80 ms window, so any test of it is a race that a loaded machine
   loses — "slow" becomes "wrong", which is the one thing the timing tests here refuse to be. Making
@@ -285,5 +352,6 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
   subscription and makes the snapshot right earlier when it does work; the log line it writes is
   how to tell whether it ever does. Deleting it should change no behaviour — if it does, that is
   worth knowing.
-- Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files behind.
+- Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files — and
+  now their branch-scoped overrides — behind.
 - Bookmarks and breakpoints, per the README's staging.

@@ -1,1 +1,0 @@
-- save and restore pinned tabs
