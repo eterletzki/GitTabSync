@@ -189,6 +189,8 @@ namespace GitTabSync.Sync
                 activeIndex = _snapshotActiveIndex;
             }
 
+            tabs = RefreshPinnedState(tabs);
+
             try
             {
                 var session = TabSessionMapper.ToSession(
@@ -197,12 +199,121 @@ namespace GitTabSync.Sync
                 _store.Save(_repository.WorkingDirectory, session);
 
                 _log.Info(string.Format(
-                    CultureInfo.InvariantCulture, "Saved {0} tab(s) for {1}.", session.Tabs.Count, head));
+                    CultureInfo.InvariantCulture,
+                    "Saved {0} tab(s) ({1} pinned) for {2}.",
+                    session.Tabs.Count,
+                    CountPinned(tabs),
+                    head));
             }
             catch (Exception e)
             {
                 _log.Error("Failed to save the tab session for " + head + ".", e);
             }
+        }
+
+        /// <summary>
+        /// Replaces the snapshot's pinned flags with what the editor reports at this instant, for
+        /// the documents it still has open. Membership and order come from the snapshot and are
+        /// not touched.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Pinning a tab changes no document, so no host notification is guaranteed to arrive: the
+        /// snapshot's copy of the pinned state can be arbitrarily old, and a tab pinned a moment
+        /// before a branch switch would otherwise be saved as unpinned. Asking the editor here
+        /// needs no notification at all.
+        /// </para>
+        /// <para>
+        /// This does not contradict the rule that the tab <em>set</em> is never read at switch
+        /// time. That rule exists because the checkout has already closed tabs for deleted files,
+        /// so the live editor no longer describes the branch being left. Membership is still taken
+        /// entirely from the snapshot; a document the editor no longer lists keeps the flag it was
+        /// last known to have, and a document the editor has opened since is ignored.
+        /// </para>
+        /// <para>
+        /// Only the pinned flag is refreshed, deliberately. A checkout reloads files whose content
+        /// changed, which can move or reset the caret — so the live caret at this moment may be
+        /// worse than the snapshot's, while pin state survives a reload untouched.
+        /// </para>
+        /// </remarks>
+        private IReadOnlyList<EditorTab> RefreshPinnedState(IReadOnlyList<EditorTab> tabs)
+        {
+            if (tabs.Count == 0)
+            {
+                return tabs;
+            }
+
+            IReadOnlyList<EditorTab> live;
+            try
+            {
+                live = _editor.GetOpenTabs() ?? Array.Empty<EditorTab>();
+            }
+            catch (Exception e)
+            {
+                // The snapshot's flags are stale but plausible; saving them beats saving nothing.
+                _log.Error("Failed to re-read the pinned tabs; saving the tracked snapshot as it is.", e);
+                return tabs;
+            }
+
+            var open = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var pinned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var tab in live)
+            {
+                open.Add(tab.AbsolutePath);
+                if (tab.IsPinned)
+                {
+                    pinned.Add(tab.AbsolutePath);
+                }
+            }
+
+            var refreshed = new List<EditorTab>(tabs.Count);
+            var changed = 0;
+
+            foreach (var tab in tabs)
+            {
+                if (!open.Contains(tab.AbsolutePath))
+                {
+                    // Already closed — by the checkout, or by the user. Keep what was last known.
+                    refreshed.Add(tab);
+                    continue;
+                }
+
+                var isPinned = pinned.Contains(tab.AbsolutePath);
+                if (isPinned == tab.IsPinned)
+                {
+                    refreshed.Add(tab);
+                    continue;
+                }
+
+                changed++;
+                refreshed.Add(new EditorTab(tab.AbsolutePath, tab.CaretLine, tab.CaretColumn, isPinned));
+            }
+
+            if (changed == 0)
+            {
+                return tabs;
+            }
+
+            _log.Info(string.Format(
+                CultureInfo.InvariantCulture,
+                "The pinned state of {0} tab(s) had changed since the last capture.",
+                changed));
+
+            return refreshed;
+        }
+
+        private static int CountPinned(IReadOnlyList<EditorTab> tabs)
+        {
+            var count = 0;
+            foreach (var tab in tabs)
+            {
+                if (tab.IsPinned)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private void Restore(GitHead head)
@@ -255,7 +366,12 @@ namespace GitTabSync.Sync
             try
             {
                 _editor.ApplyTabs(tabs, activeIndex);
-                _log.Info(string.Format(CultureInfo.InvariantCulture, "Restored {0} tab(s) for {1}.", tabs.Count, head));
+                _log.Info(string.Format(
+                    CultureInfo.InvariantCulture,
+                    "Restored {0} tab(s) ({1} pinned) for {2}.",
+                    tabs.Count,
+                    CountPinned(tabs),
+                    head));
             }
             catch (Exception e)
             {

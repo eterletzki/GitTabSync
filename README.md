@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 101 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 105 passing tests, including tests that drive the real `git` executable. |
 | Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
@@ -102,9 +102,15 @@ open/close/activate events — and saves *that* against the outgoing branch, nev
 switch time. Its own restores are excluded from the snapshot, so a half-applied state can never be
 mistaken for what you had open.
 
-Pinning a tab is the one thing that produces no document event at all, so the extension listens for
-the Pin Tab command itself and refreshes the snapshot immediately, without the short delay the
-document events go through. Pinning a tab and switching branches a moment later keeps the pin.
+Pinning a tab is the one thing that produces no document event at all — it changes no document,
+only a window property — so the snapshot's idea of what is pinned can be arbitrarily out of date.
+The pinned state is therefore re-read from the editor at the moment a session is written, for the
+documents still open, rather than taken from the snapshot. Pinning a tab and switching branches an
+instant later keeps the pin, because nothing had to notice the pin in the meantime.
+
+Which tabs are saved, and in what order, still comes from the snapshot alone — that is the whole
+point of keeping one. A document the editor has already closed keeps the pinned state it was last
+known to have, and a document the checkout has opened since is ignored.
 
 Sessions are also saved when the solution closes and when Visual Studio shuts down, since neither
 produces a branch change to react to.
@@ -197,7 +203,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 101 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 105 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -271,10 +277,10 @@ did not load — check **Extensions → Manage Extensions**.
   have nothing that could be reopened on another branch.
 - Only the caret line and column and the pinned state are remembered per tab; scroll position,
   selection and folding are not.
-- **Pinning is noticed through the Pin Tab command, not a document event.** Pinning changes no
-  document, so nothing in the running document table reports it; the extension subscribes to the
-  command instead. Anything that changes pin state without going through that command would not be
-  seen until the next document event.
+- **Pinning is never reported by Visual Studio**, so the pinned state is re-read when a session is
+  written rather than tracked as it changes. The one case that cannot be recovered: pinning a tab
+  and then switching to a branch on which that file does not exist, since Visual Studio closes the
+  tab before the session is written and the last known state is all that is left.
 
 ## Roadmap
 

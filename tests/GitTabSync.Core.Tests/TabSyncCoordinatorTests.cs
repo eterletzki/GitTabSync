@@ -243,6 +243,83 @@ namespace GitTabSync.Tests
         }
 
         [Fact]
+        public void A_tab_pinned_after_the_last_capture_is_still_saved_as_pinned()
+        {
+            var a = File_("src/A.cs");
+            _editor.SetOpen(a);
+
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            // Pinning raises nothing the host is obliged to report, so the snapshot can be this
+            // stale at the moment a branch switch arrives. The pinned state is therefore read
+            // from the editor as the session is written, not taken from the snapshot.
+            _editor.SetOpen(new EditorTab(a, isPinned: true));
+
+            SwitchTo("feature");
+
+            Assert.True(_store.Get(_repo.Path, "branch/main")!.Tabs.Single().IsPinned);
+        }
+
+        [Fact]
+        public void Unpinning_after_the_last_capture_is_saved_too()
+        {
+            var a = File_("src/A.cs");
+            _editor.SetOpen(new EditorTab(a, isPinned: true));
+
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            _editor.SetOpen(new EditorTab(a));
+
+            SwitchTo("feature");
+
+            Assert.False(_store.Get(_repo.Path, "branch/main")!.Tabs.Single().IsPinned);
+        }
+
+        [Fact]
+        public void Re_reading_the_pinned_state_does_not_change_which_tabs_are_saved()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+            var c = File_("src/C.cs");
+
+            _editor.SetOpen(a, b);
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            // The checkout has already closed B.cs and opened C.cs by the time the switch is
+            // observed. Re-reading pinned state must not let any of that into the session — the
+            // set and the order still come from the snapshot alone.
+            _editor.SetOpen(new EditorTab(a, isPinned: true), new EditorTab(c));
+
+            SwitchTo("feature");
+
+            var saved = _store.Get(_repo.Path, "branch/main");
+            Assert.Equal(new[] { "src/A.cs", "src/B.cs" }, saved!.Tabs.Select(t => t.Path).ToArray());
+            Assert.True(saved.Tabs[0].IsPinned);
+        }
+
+        [Fact]
+        public void A_tab_the_editor_has_already_closed_keeps_its_last_known_pinned_state()
+        {
+            var a = File_("src/A.cs");
+            _editor.SetOpen(new EditorTab(a, isPinned: true));
+
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            // Visual Studio closed the tab when the checkout deleted the file. The editor cannot
+            // report a pinned state for a window that no longer exists, and "gone" must not be
+            // read as "not pinned".
+            _editor.SetOpen(Array.Empty<string>());
+
+            SwitchTo("feature");
+
+            Assert.True(_store.Get(_repo.Path, "branch/main")!.Tabs.Single().IsPinned);
+        }
+
+        [Fact]
         public void Nothing_is_saved_when_the_previous_head_was_never_known()
         {
             File.WriteAllText(_headPath, string.Empty);

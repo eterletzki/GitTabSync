@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 101 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 105 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -91,7 +91,8 @@ snapshot.
 
 The Pin Tab command calls `CaptureScheduler.CaptureNow` instead, which **skips the debounce** — one
 settled action rather than a burst, and the delay is precisely what would lose a pin to a branch
-switch made right after it.
+switch made right after it. That subscription is best-effort and has never been observed firing;
+what actually guarantees the pin is saved is `TabSyncCoordinator.RefreshPinnedState`, below.
 
 ### Delays, and where they are tested
 
@@ -134,6 +135,17 @@ how snapshots are taken, that test is the one that matters.
 
 The same reason drives the `_applying` flag: a restore opens documents, which raises document events,
 which would otherwise overwrite the snapshot with a half-applied state.
+
+**The one deliberate exception is `RefreshPinnedState`**, which does read the editor as the session
+is written. It is safe because it changes no membership and no order: it walks the snapshot and
+updates *only* the pinned flag, *only* for paths the editor still reports as open. A tab the
+checkout already closed keeps its last known flag; a tab the checkout opened is ignored. It exists
+because pinning is reported by nothing — the snapshot's pinned flags have no lower bound on how
+stale they are, unlike the tab set, which document events do keep current. Caret position is
+pointedly *not* refreshed the same way: a checkout reloads changed files and can move the caret, so
+the live value there may be worse than the snapshot's. Three tests in `TabSyncCoordinatorTests`
+hold this line — if you widen the refresh beyond the pinned flag, they are the ones that will fail,
+and they are right.
 
 ### Decisions worth knowing before changing them
 
@@ -208,11 +220,14 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - Open Folder mode is not handled; only solutions (`SolutionExists` autoload).
 - Only caret line/column and pinned state are persisted per tab — no scroll position, selection or
   folding.
-- **The Pin Tab command subscription is unverified.** Pin state is a frame property
-  (`__VSFPROPID5.VSFPROPID_IsPinned`); toggling it raises no RDT document event, and
+- **The Pin Tab command subscription is unverified and no longer load-bearing.** Pin state is a
+  frame property (`__VSFPROPID5.VSFPROPID_IsPinned`); toggling it raises no RDT document event, and
   `IVsWindowFrameEvents` 1/2/3 have no pin callback, so `RepositorySyncSession` subscribes to the
-  command itself (`VSStd11CmdID.PinTab`, filtered — DTE also allows an unfiltered subscription
-  that fires for every command in the IDE, which is what to fall back to if the filtered one turns
-  out not to fire). It has never been observed firing. The log line it writes is how to tell.
+  command itself (`VSStd11CmdID.PinTab`, filtered — DTE also allows an unfiltered subscription that
+  fires for every command in the IDE). It has never been observed firing, and pins were still lost
+  with it in place, which is why `RefreshPinnedState` exists. Kept because it costs one filtered
+  subscription and makes the snapshot right earlier when it does work; the log line it writes is
+  how to tell whether it ever does. Deleting it should change no behaviour — if it does, that is
+  worth knowing.
 - Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files behind.
 - Bookmarks and breakpoints, per the README's staging.
