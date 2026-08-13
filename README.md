@@ -35,8 +35,9 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 164 passing tests, including tests that drive the real `git` executable. |
-| Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
+| Branch detection, storage, save/restore decisions | Implemented, 190 passing tests, including tests that drive the real `git` executable. |
+| Scoped settings (defaults → repository → branch → solution) | Implemented and tested in the core, including the window's view model. |
+| Visual Studio integration, including the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
 
@@ -55,16 +56,48 @@ a git repository.
 
 ## Settings
 
-**Tools → Options → Git Tab Sync → General**
+**View → Other Windows → Git Tab Sync**
 
 | Setting | Default | Effect |
 |---|---|---|
-| Close tabs on an unvisited branch | Off | When switching to a branch with no remembered tabs, close everything instead of leaving the current tabs open. |
-| Restore tabs when a solution opens | On | Restore the remembered tabs for the current branch as soon as a solution is opened, rather than waiting for a branch switch. |
+| Tabs | On | Remember which documents are open and restore them. Off means this branch is left alone entirely. |
+| Bookmarks | Off | *Not implemented yet — the setting is stored but does nothing.* |
+| Breakpoints | Off | *Not implemented yet — as above.* |
+| Close tabs on an unvisited branch | Off | Arriving on a branch with nothing remembered closes the open tabs instead of leaving them. |
+| Restore when a solution opens | On | Restore as soon as a solution is opened, rather than waiting for a branch switch. |
 
 Closing tabs on an unvisited branch is off by default because *every* branch is unvisited the first
 time you use the extension — defaulting it on would wipe your tabs the first time you tried it. The
 cost of leaving it off is some tab bleed between branches, which the next save corrects.
+
+### Scopes
+
+A branch is the unit settings reach over. Every setting can be set at five levels, each narrowing
+the one above it:
+
+| Level | Applies to |
+|---|---|
+| Defaults | every repository |
+| This repository | every branch of this repository |
+| **Branch** | one branch — the default granularity |
+| Solution | one solution, on that branch |
+| Project | one project, on that branch — **not reachable yet**, see [Limitations](#limitations) |
+
+Each setting at each level is on, off, or **inherit**. Inherit is a real third state rather than a
+default value: "off on this branch" and "nothing set on this branch" are different, and only the
+first survives someone later turning the setting on for the whole repository.
+
+The window shows the value that actually applies *and which level decided it* — "Off, inherited from
+Defaults" reads differently from "Off, set here", and a value coming from a level narrower than the
+one you are looking at says "overridden on …" rather than pretending you are in control of it.
+
+Changing a setting takes effect at the next branch switch. **Restore tabs now** applies it to the
+branch you are already on, since nothing else would trigger it. The window also lists every override
+stored for the repository — including ones on branches you are not currently on, which are otherwise
+exactly the ones that get forgotten and later look like a bug.
+
+Settings are per-user, not per-team: they are stored outside the working tree (see below) and are
+never committed.
 
 ## How it works
 
@@ -145,8 +178,10 @@ would show as a pending change on every branch switch.
 
 ```
 %LOCALAPPDATA%\GitTabSync\
+├── settings.json                           the Defaults level, shared by every repository
 └── repos\
     └── gittabsync-3f9a1c7d5e2b40a8\        one directory per repository
+        ├── settings.json                   repository, branch and solution overrides
         ├── branch_main-8c1d02e4f7a9b365.json
         ├── branch_feature_login-2b7e4a10c9d8f3e6.json
         └── detached_9f2c1d645f7a4a3b8c2e6d4b0e1a7c5-5a3e7b092c14d8f6.json
@@ -163,6 +198,15 @@ A session file:
 {"schema":1,"head":"branch\/main","savedAtUtc":"2026-08-09T10:14:32.1174820Z","activeIndex":1,
  "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9,"pinned":true},
          {"path":"README.md","relative":true,"line":1,"column":1,"pinned":false}]}
+```
+
+A settings file, holding only what has been explicitly set — a level that inherits everything
+writes nothing, which is how "off here" stays distinguishable from "not set here":
+
+```json
+{"schema":1,"scopes":[
+  {"kind":"Branch","head":"branch\/release\/1.0.1","path":"",
+   "values":[{"setting":"syncTabs","on":false}]}]}
 ```
 
 Paths inside the repository are stored relative with `/` separators, so sessions survive the
@@ -203,7 +247,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 164 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 190 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -220,8 +264,11 @@ Notable types:
 | [TabSyncCoordinator.cs](src/GitTabSync.Core/Sync/TabSyncCoordinator.cs) | Holds the snapshot; decides what to save and restore. |
 | [TabSessionMapper.cs](src/GitTabSync.Core/Sync/TabSessionMapper.cs) | Editor tabs ⇄ persisted session; drops missing files. |
 | [FileSessionStore.cs](src/GitTabSync.Core/Storage/FileSessionStore.cs) | JSON sessions under `%LOCALAPPDATA%`. |
+| [SettingsResolver.cs](src/GitTabSync.Core/Settings/SettingsResolver.cs) | Walks the scope cascade; reports the value *and* which level decided. |
+| [SettingsViewModel.cs](src/GitTabSync.Core/Settings/SettingsViewModel.cs) | Everything the settings window shows — in the core, so it is tested. |
 | [VsEditorTabs.cs](src/GitTabSync.Vsix/VsEditorTabs.cs) | The only file that touches editor windows. |
 | [RepositorySyncSession.cs](src/GitTabSync.Vsix/RepositorySyncSession.cs) | Everything alive while one repository is open. |
+| [SettingsWindowControl.xaml](src/GitTabSync.Vsix/SettingsWindowControl.xaml) | The window itself: bindings and theme brushes, no decisions. |
 
 Serialisation uses `DataContractJsonSerializer`, chosen over Newtonsoft and System.Text.Json so the
 VSIX ships no extra assemblies and cannot hit binding-redirect conflicts with the copies Visual
@@ -268,7 +315,10 @@ did not load — check **Extensions → Manage Extensions**.
 ## Limitations
 
 - **The Visual Studio layer has never been run in Visual Studio.** Everything in
-  `src/GitTabSync.Vsix` is unverified.
+  `src/GitTabSync.Vsix` is unverified, the settings window included — it builds and registers, and
+  that is the whole of the evidence.
+- **Project-level settings cannot be set yet.** The level resolves and persists, but no document is
+  attributed to its owning project, so the window has no project to offer.
 - **Tab order is approximate.** `IVsUIShell.GetDocumentWindowEnum` does not promise tab order, and
   restore reopens documents rather than rebuilding the layout. Split panes and tab groups are not
   captured.
@@ -289,8 +339,6 @@ did not load — check **Extensions → Manage Extensions**.
 2. Higher-fidelity layout, if it proves worth it. `IVsUIShellDocumentWindowMgr`
    (`SaveDocumentWindowPositions` / `ReopenDocumentWindows`) persists the real layout as an opaque
    blob — the tradeoff is losing the ability to filter out files missing on the target branch.
-3. A settings window with per-branch scope — the cascade (defaults → repository → branch →
-   solution → project) is implemented and tested in the core; nothing in the extension can set one
-   yet.
+3. Project-level settings, which need every document attributed to its owning project.
 4. Open Folder support.
-5. Bookmarks, then breakpoints — reachable from the settings above once they exist.
+5. Bookmarks, then breakpoints — the settings, storage and cascade for them already exist.

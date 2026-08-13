@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 164 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 189 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -65,16 +65,19 @@ VSIX and the modern test project.
 ```
 Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity), BranchMonitor
 Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
-Core/Settings/  SyncSetting + SyncSettingCatalog (names/defaults), SettingScope(Kind), SyncContext
-                (the cascade), ScopedSettings (persisted), ISettingsStore/FileSettingsStore,
-                ISyncSettings, SettingsResolver, ResolvedSetting
+Core/Settings/  SyncSetting + SyncSettingCatalog (names/defaults/labels), SettingScope(Kind),
+                SyncContext (the cascade), ScopedSettings (persisted),
+                ISettingsStore/FileSettingsStore, ISyncSettings, SettingsResolver,
+                ResolvedSetting, and the window's model: SettingsViewModel, SyncSettingRow,
+                SettingScopeChoice, SettingOverrideRow, SettingScopeLabel
 Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal),
                 RecoverableStorageFailure (internal, shared swallow policy)
 Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
                 CaptureScheduler (when the editor is read), TabSyncOptions, ITabSyncLog
-Vsix/           GitTabSyncPackage (autoload + solution events), RepositorySyncSession (RDT
-                subscription, one per open repo), VsEditorTabs (the only file touching editor
-                windows), GitTabSyncOptionsPage, OutputWindowLog
+Vsix/           GitTabSyncPackage (autoload, solution events, the menu command),
+                RepositorySyncSession (RDT subscription, one per open repo; owns the resolver),
+                VsEditorTabs (the only file touching editor windows), GitTabSyncToolWindow +
+                SettingsWindowControl.xaml(.cs), GitTabSyncPackage.vsct, OutputWindowLog
 ```
 
 The seam is `IEditorTabs`: Core never sees a VS type, the VSIX never makes a sync decision. New
@@ -192,10 +195,44 @@ override would apply to every repository with a branch of that name. Scope kinds
 are stored as text, never as enum ordinals, so the enums can be reordered; an unrecognised value is
 skipped rather than guessed at.
 
-`TabSyncOptions` now implements `ISyncSettings` as the degenerate zero-scope case — one answer
-everywhere, ignoring the context. That is what Tools > Options can express and what the VSIX still
-passes. It exists to keep the shell compiling until the settings UI lands, and has nothing left to do
-afterwards.
+`TabSyncOptions` implements `ISyncSettings` as the degenerate zero-scope case — one answer
+everywhere, ignoring the context. Nothing in the VSIX passes it any more; it survives as
+`TabSyncCoordinator`'s null-object default and as the convenient shorthand in tests that are not
+about scoping. Replacing it with a `SyncSettingCatalog`-backed default object would be tidier and
+would touch a lot of test arrange code for no behaviour change.
+
+### The settings window
+
+`SettingsViewModel` is in **Core**, with no WPF and no VS references, so scope selection, the
+tri-state values, the origin text and the override list are all covered by `dotnet test`. That is
+deliberate: the VS layer has no coverage at all, so the rule is that the window holds no decision
+worth testing. `SettingsWindowControl.xaml.cs` binds, follows the solution, and marshals — nothing
+else belongs there.
+
+Three details are easy to undo by accident:
+
+- **The tri-state binds directly.** `SyncSettingRow.Value` is `bool?` and the check box is
+  `IsThreeState="True"`; `null` is inherit on both sides, so there is no converter and no place for
+  the third state to be flattened. Introducing a `bool` anywhere in that chain re-creates exactly
+  the bug the cascade exists to avoid.
+- **`EffectiveText` distinguishes inherited from overridden.** A value from a *narrower* scope than
+  the selected one reads "overridden on …", not "inherited from …". Getting this backwards is how a
+  user concludes a toggle is broken when it is being overruled from below.
+- **The window reaches the package through `GitTabSyncPackage.Instance`, set in the constructor.**
+  Not through `ToolWindowPane.Package`, and not from `InitializeAsync`: a docked window is restored
+  at startup and can be constructed while the package is still initialising.
+
+`RepositorySyncSession` owns the `SettingsResolver` (it needs the working directory, which only
+exists after `GitRepository.Discover`) and hands the same instance to both the coordinator and the
+window, which is why a toggle needs no change notification to take effect — the coordinator re-reads
+at every decision. The one thing that does need a nudge is applying a setting to the branch you are
+already on, which is what `RestoreCurrent`/the **Restore tabs now** button is for. Doing it
+implicitly on a settings change would rearrange the editor while somebody was reading a checkbox.
+
+**Tools > Options is gone.** `GitTabSyncOptionsPage` was deleted along with `[ProvideOptionPage]`:
+once the window can edit the `Global` scope, a property grid that silently ignores scope is a second
+and weaker way to set the same things. Nothing shipped to a Marketplace, so there were no stored
+preferences to migrate.
 
 ### Decisions worth knowing before changing them
 
@@ -302,25 +339,32 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - No coverage of the Visual Studio layer at all. `VsEditorTabs`, `RepositorySyncSession` and
   `GitTabSyncPackage` compile and package but **have never been run inside Visual Studio**. Treat
   their behaviour as unverified. This is the next thing that matters.
-- **Nothing in the VSIX can set a scope yet.** `SettingsResolver` is fully tested but has no
-  production caller: `GitTabSyncPackage` still reads the `DialogPage` once into a flat
-  `TabSyncOptions` and passes that, so from a user's point of view settings are still global and
-  still read once — changing them in Tools > Options does not affect the open solution. Core
-  resolving per decision removes the *correctness* half of that gap, not the UI half. The tool
-  window is what closes it.
+- **The settings window has never been opened.** It compiles, the `.vsct` compiles, and the pkgdef
+  registers both `Menus.ctmenu` and the tool window GUID — but "it builds" is the entire evidence.
+  Everything below is unverified: whether the command appears under View > Other Windows, whether
+  the pane hosts the WPF control, whether `VsBrushes` resolve in both themes, whether the combo box
+  and the three-state check boxes bind, and whether `GitTabSyncPackage.Instance` is populated when a
+  docked window is restored at startup. Open it in `devenv /rootsuffix Exp` before believing any of
+  it.
+- **Nothing supplies a project scope.** The window offers Defaults, repository, branch and — when a
+  solution is open — solution. `SettingScopeKind.Project` resolves, persists and is tested, but
+  `RepositorySyncSession.CurrentContext` passes no project path, so the level is unreachable from
+  the UI. See the attribution work below.
 - **`SyncBookmarks` and `SyncBreakpoints` are defined but read by nothing.** They exist so the
   storage format does not have to change when the features land; `SettingsStoreTests` proves they
-  round-trip. Do not expose them in a UI before the features exist — a toggle wired to nothing is
-  indistinguishable from a broken one.
-- **Solution and project scopes resolve but are never supplied.** `SyncContext` accepts and orders
-  them, and `SettingsResolverTests` covers all five levels, but `TabSyncCoordinator.ContextFor`
-  builds a branch-level context because nothing attributes a document to its owning project. Making
-  those two levels reachable means `EditorTab.ProjectPath`, a `TabEntry` member at `Order = 5` (the
-  `pinned` member is the precedent for appending without a schema bump), an `IVsHierarchy` lookup in
-  `VsEditorTabs`, and a rule for documents owned by no project and for linked/shared files owned by
-  several. It also makes a stored session a *partial* record, so `CloseTabsWhenBranchHasNoSession`
-  must then leave excluded projects' tabs alone — that needs its own test before the feature is
-  believable.
+  round-trip. The window shows them **disabled**, with the reason, via
+  `SyncSettingCatalog.IsImplemented` — a toggle wired to nothing must not look like a working one.
+  Deleting that entry is the only change the UI needs when a feature arrives.
+- **Making the project scope reachable** means `EditorTab.ProjectPath`, a `TabEntry` member at
+  `Order = 5` (the `pinned` member is the precedent for appending without a schema bump), an
+  `IVsHierarchy` lookup in `VsEditorTabs`, and a rule for documents owned by no project and for
+  linked/shared files owned by several. It also makes a stored session a *partial* record, so
+  `CloseTabsWhenBranchHasNoSession` must then leave excluded projects' tabs alone — that needs its
+  own test before the feature is believable. Both ends have to change together:
+  `TabSyncCoordinator.ContextFor` and `RepositorySyncSession.CurrentContext` must name the same
+  project, or the window will set a scope the coordinator never reads. That trap was live for the
+  solution scope during this work and is what
+  `A_solution_scoped_override_is_honoured_by_the_coordinator` now guards.
 - **`GitRepository.ReadHead`'s retry loop is untested**, and cannot be tested honestly as written:
   5 attempts × 20 ms hard-codes a ~80 ms window, so any test of it is a race that a loaded machine
   loses — "slow" becomes "wrong", which is the one thing the timing tests here refuse to be. Making

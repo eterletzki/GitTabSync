@@ -5,6 +5,7 @@
     <RootNamespace>GitTabSync</RootNamespace>
     <AssemblyName>GitTabSync.Vsix</AssemblyName>
     <UseCodebase>true</UseCodebase>
+    <UseWPF>true</UseWPF>
 
     <!-- Makes Microsoft.VSSDK.BuildTools import the VSIX packaging targets from the NuGet
          package (it defaults to false). This is what lets the extension build with nothing but
@@ -36,6 +37,15 @@
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compiled into the Menus.ctmenu resource that [ProvideMenuResource] registers. Without a
+         command table there is no way for a user to open a tool window. -->
+    <None Remove="GitTabSyncPackage.vsct" />
+    <VSCTCompile Include="GitTabSyncPackage.vsct">
+      <ResourceName>Menus.ctmenu</ResourceName>
+    </VSCTCompile>
   </ItemGroup>
 
   <ItemGroup>

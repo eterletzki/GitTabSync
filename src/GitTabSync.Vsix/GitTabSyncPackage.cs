@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.Design;
 using System.Runtime.InteropServices;
 using System.Threading;
 using GitTabSync.Sync;
@@ -15,15 +16,36 @@ namespace GitTabSync
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(PackageGuidString)]
     [ProvideAutoLoad(VSConstants.UICONTEXT.SolutionExists_string, PackageAutoLoadFlags.BackgroundLoad)]
-    [ProvideOptionPage(typeof(GitTabSyncOptionsPage), "Git Tab Sync", "General", 0, 0, supportsAutomation: true)]
+    [ProvideMenuResource("Menus.ctmenu", 1)]
+    [ProvideToolWindow(typeof(GitTabSyncToolWindow))]
     public sealed class GitTabSyncPackage : AsyncPackage, IVsSolutionEvents
     {
         public const string PackageGuidString = "b7f0e2a4-3c15-4d8e-9a6b-2f5c8d1e7a30";
+
+        public GitTabSyncPackage()
+        {
+            // Assigned here rather than in InitializeAsync because a docked tool window is
+            // restored at startup and can be constructed while initialisation is still running.
+            // There is exactly one package instance per Visual Studio process.
+            Instance = this;
+        }
+
+        /// <summary>The loaded package, for the tool window to reach the running session.</summary>
+        internal static GitTabSyncPackage? Instance { get; private set; }
 
         private ITabSyncLog _log = NullTabSyncLog.Instance;
         private IVsSolution? _solution;
         private RepositorySyncSession? _session;
         private uint _solutionEventsCookie;
+
+        /// <summary>
+        /// Raised when the session is created or torn down, so an open settings window can follow
+        /// the solution rather than showing a repository that is no longer open. UI thread.
+        /// </summary>
+        public event EventHandler? SessionChanged;
+
+        /// <summary>The session for the open solution, or <c>null</c> when there is none.</summary>
+        internal RepositorySyncSession? CurrentSession => _session;
 
         protected override async Task InitializeAsync(
             CancellationToken cancellationToken,
@@ -38,9 +60,44 @@ namespace GitTabSync
             _solution = await GetServiceAsync(typeof(SVsSolution)) as IVsSolution;
             _solution?.AdviseSolutionEvents(this, out _solutionEventsCookie);
 
+            // The interface, not OleMenuCommandService: the concrete class inherits from
+            // MenuCommandService in System.Design, and referencing a WinForms designer assembly to
+            // add one menu item is not a trade worth making.
+            if (await GetServiceAsync(typeof(IMenuCommandService)) is IMenuCommandService commands)
+            {
+                commands.AddCommand(new MenuCommand(
+                    ShowSettingsWindow,
+                    new CommandID(GitTabSyncToolWindow.CommandSet, GitTabSyncToolWindow.CommandId)));
+            }
+            else
+            {
+                _log.Info("The command service is unavailable; the settings window cannot be opened from the menu.");
+            }
+
             // The package autoloads on SolutionExists, so by the time it initialises the
             // solution is usually already open and OnAfterOpenSolution has been and gone.
             StartSessionIfSolutionIsOpen();
+        }
+
+        private void ShowSettingsWindow(object sender, EventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                var window = FindToolWindow(typeof(GitTabSyncToolWindow), 0, create: true);
+                if (window?.Frame is not IVsWindowFrame frame)
+                {
+                    _log.Info("The settings window could not be created.");
+                    return;
+                }
+
+                ErrorHandler.ThrowOnFailure(frame.Show());
+            }
+            catch (Exception exception)
+            {
+                _log.Error("Failed to open the settings window.", exception);
+            }
         }
 
         private void StartSessionIfSolutionIsOpen()
@@ -52,7 +109,7 @@ namespace GitTabSync
                 return;
             }
 
-            if (_solution.GetSolutionInfo(out var solutionDirectory, out _, out _) != VSConstants.S_OK)
+            if (_solution.GetSolutionInfo(out var solutionDirectory, out var solutionFile, out _) != VSConstants.S_OK)
             {
                 return;
             }
@@ -64,16 +121,15 @@ namespace GitTabSync
 
             try
             {
-                var options = (GetDialogPage(typeof(GitTabSyncOptionsPage)) as GitTabSyncOptionsPage)?.ToOptions()
-                    ?? new TabSyncOptions();
-
                 _session = RepositorySyncSession.TryCreate(
-                    solutionDirectory, this, JoinableTaskFactory, options, _log);
+                    solutionDirectory, solutionFile, this, JoinableTaskFactory, _log);
             }
             catch (Exception e)
             {
                 _log.Error("Failed to start tab syncing.", e);
             }
+
+            SessionChanged?.Invoke(this, EventArgs.Empty);
         }
 
         private void StopSession()
@@ -99,6 +155,7 @@ namespace GitTabSync
             {
                 _session.Dispose();
                 _session = null;
+                SessionChanged?.Invoke(this, EventArgs.Empty);
             }
         }
 

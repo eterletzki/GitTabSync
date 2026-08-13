@@ -1,0 +1,123 @@
+<UserControl x:Class="GitTabSync.SettingsWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vsshell="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
+             Background="{DynamicResource {x:Static vsshell:VsBrushes.WindowKey}}"
+             Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+             MinWidth="240">
+
+    <!-- Every colour comes from VsBrushes. A hardcoded brush looks broken in dark theme, which is
+         what most people are running. -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}" />
+        </Style>
+        <Style x:Key="Muted" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static vsshell:VsBrushes.GrayTextKey}}" />
+        </Style>
+        <Style x:Key="Heading" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,12,0,4" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <!-- Shown when no solution is open, or the solution is not in a git repository. -->
+        <TextBlock x:Name="NoRepository"
+                   Style="{StaticResource Muted}"
+                   Margin="12"
+                   TextWrapping="Wrap"
+                   Text="No git repository is open. Open a solution inside one to configure it." />
+
+        <ScrollViewer x:Name="Body" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+            <StackPanel Margin="12">
+
+                <TextBlock FontWeight="SemiBold">
+                    <Run Text="{Binding RepositoryName, Mode=OneWay}" />
+                    <Run Text=" · " />
+                    <Run Text="{Binding HeadText, Mode=OneWay}" />
+                </TextBlock>
+
+                <TextBlock Style="{StaticResource Heading}" Text="Setting these for" />
+                <ComboBox ItemsSource="{Binding Scopes}"
+                          SelectedItem="{Binding SelectedScope, Mode=TwoWay}"
+                          DisplayMemberPath="Label" />
+
+                <ItemsControl ItemsSource="{Binding Rows}" Margin="0,12,0,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,0,0,10" IsEnabled="{Binding IsImplemented}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <!-- IsThreeState binds bool? directly: null is "inherit", which is
+                                     exactly what SettingsResolver.GetOverride returns. -->
+                                <CheckBox Grid.Column="0"
+                                          IsThreeState="True"
+                                          IsChecked="{Binding Value, Mode=TwoWay}"
+                                          VerticalAlignment="Top"
+                                          Margin="0,2,8,0" />
+
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding DisplayName}" />
+                                    <TextBlock Style="{StaticResource Muted}"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding EffectiveText}" />
+                                    <TextBlock Style="{StaticResource Muted}"
+                                               TextWrapping="Wrap"
+                                               Text="{Binding UnavailableReason}" />
+                                </StackPanel>
+
+                                <Button Grid.Column="2"
+                                        Content="Inherit"
+                                        Padding="6,1"
+                                        VerticalAlignment="Top"
+                                        Visibility="{Binding IsSetHere, Converter={StaticResource BoolToVisibility}}"
+                                        Click="OnClearRow" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Content="Restore tabs now" Padding="8,2" HorizontalAlignment="Left" Click="OnRestoreNow" />
+                <TextBlock Style="{StaticResource Muted}"
+                           TextWrapping="Wrap"
+                           Margin="0,4,0,0"
+                           Text="Changing a setting takes effect on the next branch switch. Use this to apply it here." />
+
+                <TextBlock Style="{StaticResource Heading}"
+                           Text="Overrides in this repository"
+                           Visibility="{Binding HasOverrides, Converter={StaticResource BoolToVisibility}}" />
+
+                <ItemsControl ItemsSource="{Binding Overrides}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0" TextWrapping="Wrap">
+                                    <Run Text="{Binding ScopeText, Mode=OneWay}" />
+                                    <Run Text=" — " />
+                                    <Run Text="{Binding SettingText, Mode=OneWay}" />
+                                    <Run Text=" " />
+                                    <Run Text="{Binding ValueText, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <Button Grid.Column="1" Content="Clear" Padding="6,1" Click="OnClearOverride" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

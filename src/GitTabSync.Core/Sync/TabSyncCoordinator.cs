@@ -40,6 +40,7 @@ namespace GitTabSync.Sync
         private readonly ISyncSettings _settings;
         private readonly ITabSyncLog _log;
         private readonly Func<DateTime> _utcNow;
+        private readonly string? _solutionFilePath;
         private readonly object _gate = new object();
 
         private IReadOnlyList<EditorTab> _snapshot = Array.Empty<EditorTab>();
@@ -55,7 +56,8 @@ namespace GitTabSync.Sync
             IEditorTabs editor,
             ISyncSettings? settings = null,
             ITabSyncLog? log = null,
-            Func<DateTime>? utcNow = null)
+            Func<DateTime>? utcNow = null,
+            string? solutionFilePath = null)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _monitor = monitor ?? throw new ArgumentNullException(nameof(monitor));
@@ -64,6 +66,7 @@ namespace GitTabSync.Sync
             _settings = settings ?? new TabSyncOptions();
             _log = log ?? NullTabSyncLog.Instance;
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
+            _solutionFilePath = solutionFilePath;
         }
 
         public void Start()
@@ -99,12 +102,16 @@ namespace GitTabSync.Sync
         }
 
         /// <summary>
-        /// The situation a setting is resolved against. Branch-level: the coordinator knows the
-        /// repository and the head, and nothing about which solution or project a document belongs
-        /// to — the host would have to supply that, and does not yet.
+        /// The situation a setting is resolved against.
         /// </summary>
+        /// <remarks>
+        /// The solution is included because the settings window offers a solution scope, and a
+        /// scope the UI can set but the coordinator does not consult is a control that does
+        /// nothing. Project scope is still absent from both: no document is attributed to its
+        /// owning project yet, so neither end can name one.
+        /// </remarks>
         private SyncContext ContextFor(GitHead head) =>
-            new SyncContext(_repository.WorkingDirectory, head.SessionKey);
+            new SyncContext(_repository.WorkingDirectory, head.SessionKey, _solutionFilePath);
 
         /// <summary>
         /// Refreshes the tracked snapshot of open tabs. The host calls this whenever documents
@@ -142,6 +149,27 @@ namespace GitTabSync.Sync
             {
                 _log.Error("Failed to read the open documents.", e);
             }
+        }
+
+        /// <summary>
+        /// Applies the stored session for the current HEAD now, because the user asked.
+        /// </summary>
+        /// <remarks>
+        /// Every other restore is a reaction to something. This is the only way to ask for one,
+        /// and it is what makes turning tab syncing back on for the branch you are standing on
+        /// take visible effect — doing that implicitly, on a settings change, would rearrange the
+        /// editor while someone was reading a checkbox.
+        /// </remarks>
+        public void RestoreCurrent()
+        {
+            var head = _monitor.Current;
+            if (head is null)
+            {
+                _log.Info("HEAD could not be read; there is nothing to restore.");
+                return;
+            }
+
+            Restore(head);
         }
 
         /// <summary>

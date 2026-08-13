@@ -29,7 +29,7 @@ namespace GitTabSync.Tests
             _repository = GitRepository.Discover(_repo.Path)!;
         }
 
-        private TabSyncCoordinator Start(ISyncSettings? settings = null)
+        private TabSyncCoordinator Start(ISyncSettings? settings = null, string? solutionFilePath = null)
         {
             _monitor = new BranchMonitor(_repository, pollInterval: TimeSpan.Zero);
             _coordinator = new TabSyncCoordinator(
@@ -38,7 +38,8 @@ namespace GitTabSync.Tests
                 _store,
                 _editor,
                 settings ?? new TabSyncOptions { RestoreOnStartup = false },
-                _log);
+                _log,
+                solutionFilePath: solutionFilePath);
 
             _coordinator.Start();
             return _coordinator;
@@ -552,6 +553,97 @@ namespace GitTabSync.Tests
 
             SwitchTo("scratch");
             Assert.Empty(_editor.Open);
+        }
+
+        [Fact]
+        public void A_solution_scoped_override_is_honoured_by_the_coordinator()
+        {
+            var a = File_("src/A.cs");
+            File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var solution = _repo.CreateFile("GitTabSync.slnx", "<Solution />");
+            var settings = Scoped();
+            settings.Set(
+                SettingScope.Solution("branch/feature", "GitTabSync.slnx"),
+                SyncSetting.SyncTabs,
+                false);
+
+            var coordinator = Start(settings, solutionFilePath: solution);
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/feature",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            SwitchTo("feature");
+
+            // The settings window offers a solution scope. A scope the UI can set but the
+            // coordinator never consults is a control that does nothing.
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        [Fact]
+        public void RestoreCurrent_applies_the_stored_session_on_request()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            // The only restore that is not a reaction to something. Turning tab syncing back on
+            // for the branch you are standing on has nothing to react to, and rearranging the
+            // editor the moment a checkbox changed would be worse than a button.
+            coordinator.RestoreCurrent();
+
+            Assert.Equal(new[] { b }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        [Fact]
+        public void RestoreCurrent_does_nothing_when_head_cannot_be_read()
+        {
+            File.WriteAllText(_headPath, string.Empty);
+            var a = File_("src/A.cs");
+            _editor.SetOpen(a);
+
+            var coordinator = Start();
+            coordinator.RestoreCurrent();
+
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+            Assert.Equal(0, _editor.ApplyCallCount);
+        }
+
+        [Fact]
+        public void RestoreCurrent_still_respects_a_branch_with_tab_syncing_off()
+        {
+            var a = File_("src/A.cs");
+            File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/main"), SyncSetting.SyncTabs, false);
+
+            var coordinator = Start(settings);
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            coordinator.RestoreCurrent();
+
+            // Asking for a restore is not a way round the setting; it is a way to apply it.
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
         }
 
         // ---- failures ----

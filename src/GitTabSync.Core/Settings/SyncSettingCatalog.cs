@@ -58,6 +58,58 @@ namespace GitTabSync.Settings
             return false;
         }
 
+        /// <summary>The label a settings UI shows for this setting.</summary>
+        public static string DisplayNameOf(SyncSetting setting)
+        {
+            switch (setting)
+            {
+                case SyncSetting.SyncTabs:
+                    return "Tabs";
+                case SyncSetting.SyncBookmarks:
+                    return "Bookmarks";
+                case SyncSetting.SyncBreakpoints:
+                    return "Breakpoints";
+                case SyncSetting.CloseTabsWhenBranchHasNoSession:
+                    return "Close tabs on an unvisited branch";
+                case SyncSetting.RestoreOnStartup:
+                    return "Restore when a solution opens";
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(setting));
+            }
+        }
+
+        public static string DescriptionOf(SyncSetting setting)
+        {
+            switch (setting)
+            {
+                case SyncSetting.SyncTabs:
+                    return "Remember which documents are open and restore them on this branch.";
+                case SyncSetting.SyncBookmarks:
+                    return "Remember bookmarks per branch.";
+                case SyncSetting.SyncBreakpoints:
+                    return "Remember breakpoints per branch.";
+                case SyncSetting.CloseTabsWhenBranchHasNoSession:
+                    return "Arriving on a branch with nothing remembered closes the open tabs "
+                        + "instead of leaving them.";
+                case SyncSetting.RestoreOnStartup:
+                    return "Restore as soon as a solution is opened, not only on a later switch.";
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(setting));
+            }
+        }
+
+        /// <summary>
+        /// False for settings whose feature does not exist yet.
+        /// </summary>
+        /// <remarks>
+        /// The UI shows these, disabled and with the reason: a toggle wired to nothing is
+        /// indistinguishable from a broken one, and hiding them entirely hides the shape of what
+        /// the settings are for. Delete the entry here when the feature lands — the storage,
+        /// cascade and persistence already work, so that is the only change needed.
+        /// </remarks>
+        public static bool IsImplemented(SyncSetting setting) =>
+            setting != SyncSetting.SyncBookmarks && setting != SyncSetting.SyncBreakpoints;
+
         /// <summary>
         /// The value used when nothing has been set at any scope.
         /// </summary>
