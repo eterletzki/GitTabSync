@@ -342,9 +342,11 @@ They skip when git is not on PATH.
 debounce, the 5 s poll, the 300 ms capture debounce, and the pin path that skips it. They run
 against real timers for the same reason the rest run against real files: the thing under test *is*
 elapsed time, and a fake clock would prove only that the arithmetic is right. Each test disables
-one detector so the other has to do the work, and the assertions are one-sided — "not yet" at a
-fraction of the delay, "eventually" with ten seconds of headroom — so a loaded machine is allowed
-to be slow without being reported as broken.
+one detector so the other has to do the work, and the assertions are one-sided so a loaded machine
+is allowed to be slow without being reported as broken: "eventually" has ten seconds of headroom,
+and "not before" is *timed* — the moment something happened is measured and compared against the
+delay — rather than sampled part way through, which is an assertion a stalled thread can fail
+without anything being wrong.
 
 ## Troubleshooting
 

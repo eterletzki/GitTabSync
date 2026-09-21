@@ -120,9 +120,24 @@ timing logic that cannot be tested is timing logic that drifts.
 | 300 ms | `CaptureScheduler.DefaultDelay` | Document events arrive while the document is still half-open. |
 | none | `CaptureScheduler.CaptureNow` | The Pin Tab command. Waiting is what loses the pin.  |
 
-The tests are one-sided on purpose: "not yet" is asserted at a fraction of the delay, "eventually"
-waits ten seconds. A loaded machine is allowed to be slow, not wrong. If you change a number, the
-first test in `CaptureSchedulerTests` fails until the docs above agree with the code.
+The tests are one-sided on purpose: a loaded machine is allowed to be slow, never reported as wrong.
+"Eventually" waits ten seconds. **"Not before" is _timed_, never _sampled_** — the moment something
+happened is recorded and compared against the delay, rather than asking "has it happened yet?" part
+way through. That distinction is not academic: sampling asks the question from a thread the OS can
+deschedule past the entire delay, and it then reports a late *test* as an early *capture*. It is
+what made `A_change_is_not_reported_before_the_debounce_has_elapsed` fail on CI while passing on
+every developer machine — reproducible locally by pinning the run to two saturated cores, where it
+failed three times in six. A stall can only push a measured elapsed time up, so a timed assertion
+fails only when the code really did act early.
+
+Two tests cannot be phrased as a measurement, because they assert that *nothing* happened while
+events kept arriving. Those are given a margin wide enough that a stall of that length would be
+absurd — four seconds in `Each_schedule_pushes_the_capture_further_out`, 1.5 s in
+`A_burst_of_head_writes_produces_a_single_change` — and each says so at the margin. Widening them
+costs no run time in the first case and about a second in the second.
+
+If you change one of the production numbers above, the first test in `CaptureSchedulerTests` fails
+until the docs agree with the code.
 
 ### The two constraints that shape everything
 
@@ -372,12 +387,24 @@ Three of them fail against the pre-fix coordinator; I checked. If you add a sync
 depends on a host notification, add it here rather than to `TabSyncCoordinatorTests`, and resist
 the urge to "just capture" in the arrange step.
 
-Two things in that file are load-bearing and easy to undo by accident. The `Reporting(...)` helper
+Three things in that file are load-bearing and easy to undo by accident. The `Reporting(...)` helper
 takes its read-count baseline **before** running the host action; taking it afterwards races the
 scheduler, and a capture that already ran leaves the test waiting ten seconds for one that is never
 coming, then blaming the wiring. And in the pin tests the baseline is taken *after* the silent pin,
 so whichever capture satisfies the wait has provably seen it — wait for "some capture" without that
 ordering and the test passes against an unpinned snapshot, proving nothing.
+
+The third cost two red CI runs. **Waiting for the editor to be read is not waiting for the capture.**
+`CaptureSnapshot` reads the editor and then, under a separate lock, stores what it read; the fake
+editor can only see the first half. A test that moved on at the read could reach `SwitchTo` while the
+snapshot was still being assigned, so the outgoing branch was saved from the *previous* snapshot —
+empty, normally — and the failure read as "the notification never arrived" when it had arrived and
+simply not landed. `Reporting` therefore waits for the read *and* for `WaitForCaptureToFinish`, which
+is what the in-flight counter around the scheduler's callback is for. That counter is not a breach of
+the no-`CaptureSnapshot` rule at the top of the file: the scheduler still makes the call, on its own
+thread, after a real debounce. To see why it is needed, put a `Thread.Sleep` at the top of
+`FakeHostEditor.GetActiveTabIndex` — the step between the read and the store — and seven of the eight
+tests fail, two of them with exactly the errors CI produced.
 
 ### The failure paths
 

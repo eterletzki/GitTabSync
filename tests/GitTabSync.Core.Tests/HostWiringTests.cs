@@ -45,9 +45,13 @@ namespace GitTabSync.Tests
         private readonly string _headPath;
         private readonly GitRepository _repository;
 
+        /// <summary>Signalled whenever a capture finishes, for <see cref="WaitForCaptureToFinish"/>.</summary>
+        private readonly ManualResetEventSlim _captureFinished = new ManualResetEventSlim(false);
+
         private BranchMonitor? _monitor;
         private TabSyncCoordinator? _coordinator;
         private CaptureScheduler? _scheduler;
+        private int _capturesInFlight;
 
         public HostWiringTests()
         {
@@ -66,10 +70,64 @@ namespace GitTabSync.Tests
                 _editor,
                 new TabSyncOptions { RestoreOnStartup = false });
 
-            _scheduler = new CaptureScheduler(_coordinator.CaptureSnapshot, captureDelay ?? CaptureDelay);
+            _scheduler = new CaptureScheduler(Capture, captureDelay ?? CaptureDelay);
             _editor.Reported += _scheduler.Schedule;
 
             _coordinator.Start();
+        }
+
+        /// <summary>
+        /// What the scheduler calls, which is <see cref="TabSyncCoordinator.CaptureSnapshot"/> and
+        /// nothing else — wrapped only to count captures that have <em>finished</em>.
+        /// </summary>
+        /// <remarks>
+        /// This is not the forbidden call. The rule at the top of this file is that no test may
+        /// arrange a snapshot by calling <c>CaptureSnapshot</c> itself; here the scheduler calls it,
+        /// on its own thread, after a real debounce, exactly as <c>RepositorySyncSession</c> has it.
+        /// The counter observes that path, it does not stand in for it.
+        /// <para>
+        /// It has to exist because reading the editor and storing what was read are two steps, and
+        /// only the first is visible from the editor side. See <see cref="Reporting"/>.
+        /// </para>
+        /// </remarks>
+        private void Capture()
+        {
+            Interlocked.Increment(ref _capturesInFlight);
+
+            try
+            {
+                _coordinator!.CaptureSnapshot();
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _capturesInFlight);
+                _captureFinished.Set();
+            }
+        }
+
+        /// <summary>Waits until no capture is part-way through.</summary>
+        private bool WaitForCaptureToFinish(TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+
+            while (Volatile.Read(ref _capturesInFlight) > 0)
+            {
+                var remaining = deadline - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    return false;
+                }
+
+                _captureFinished.Reset();
+                if (Volatile.Read(ref _capturesInFlight) == 0)
+                {
+                    return true;
+                }
+
+                _captureFinished.Wait(remaining);
+            }
+
+            return true;
         }
 
         private void SwitchTo(string branch)
@@ -84,16 +142,30 @@ namespace GitTabSync.Tests
         /// Runs a host action that should end in a capture, and waits for that capture to land.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The baseline is taken <em>before</em> the action. Taking it afterwards races the
         /// scheduler: on a slow machine the capture can already have run by then, and the test
         /// would sit waiting for a second one that nothing is going to trigger, failing after the
         /// full timeout with a message blaming the wiring.
+        /// </para>
+        /// <para>
+        /// Waiting for the read is <strong>not</strong> enough on its own, and that cost two CI
+        /// runs. A capture reads the editor and then, separately, stores what it read; the editor
+        /// only knows about the first half. A test that moves on at the read can switch branches
+        /// while the snapshot is still being assigned, and the outgoing branch is then saved from
+        /// the *previous* snapshot — empty, in the common case, so the failure reads as "the
+        /// notification never arrived" when in fact it arrived and had not landed yet. Waiting for
+        /// the capture to finish as well is what makes the handover observable.
+        /// </para>
         /// </remarks>
         private void Reporting(Action report, string because = "The reported change never reached a capture.")
         {
             var target = _editor.Reads + 1;
             report();
             Assert.True(_editor.WaitForReads(target, Eventually), because);
+            Assert.True(
+                WaitForCaptureToFinish(Eventually),
+                because + " (It read the editor, but never finished storing what it read.)");
         }
 
         /// <summary>
@@ -113,7 +185,7 @@ namespace GitTabSync.Tests
             {
                 var before = _editor.Reads;
                 Thread.Sleep(settle);
-                if (_editor.Reads == before)
+                if (_editor.Reads == before && WaitForCaptureToFinish(Eventually))
                 {
                     return;
                 }
@@ -296,6 +368,7 @@ namespace GitTabSync.Tests
 
             _coordinator?.Dispose();
             _monitor?.Dispose();
+            _captureFinished.Dispose();
             _repo.Dispose();
         }
     }
