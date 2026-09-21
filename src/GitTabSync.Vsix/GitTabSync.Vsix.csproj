@@ -5,6 +5,7 @@
     <RootNamespace>GitTabSync</RootNamespace>
     <AssemblyName>GitTabSync.Vsix</AssemblyName>
     <UseCodebase>true</UseCodebase>
+    <UseWPF>true</UseWPF>
 
     <!-- Makes Microsoft.VSSDK.BuildTools import the VSIX packaging targets from the NuGet
          package (it defaults to false). This is what lets the extension build with nothing but
@@ -26,6 +27,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The theme files are included twice on purpose. UseWPF compiles every .xaml in the project
+         as a Page, which is what type-checks a theme at build time; the copy embedded here is the
+         text, which is what ThemeLibrary writes into %LOCALAPPDATA%\GitTabSync\themes when a
+         built-in theme is missing. Themes are always loaded from that folder, so the compiled
+         copies are a build-time check rather than a second code path. -->
+    <EmbeddedResource Include="Theming\VisualStudio.xaml" LogicalName="GitTabSync.Theming.VisualStudio.xaml" />
+    <EmbeddedResource Include="Theming\Compact.xaml" LogicalName="GitTabSync.Theming.Compact.xaml" />
+    <EmbeddedResource Include="Theming\Plain.xaml" LogicalName="GitTabSync.Theming.Plain.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 17.x reference assemblies: the APIs used here are long-standing and present in both
          Visual Studio 2022 (17.x) and 2026 (18.x), so one build targets both. -->
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
@@ -36,6 +48,15 @@
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compiled into the Menus.ctmenu resource that [ProvideMenuResource] registers. Without a
+         command table there is no way for a user to open a tool window. -->
+    <None Remove="GitTabSyncPackage.vsct" />
+    <VSCTCompile Include="GitTabSyncPackage.vsct">
+      <ResourceName>Menus.ctmenu</ResourceName>
+    </VSCTCompile>
   </ItemGroup>
 
   <ItemGroup>

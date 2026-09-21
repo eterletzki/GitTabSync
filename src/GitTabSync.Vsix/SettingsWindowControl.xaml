@@ -1,0 +1,165 @@
+<UserControl x:Class="GitTabSync.SettingsWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinWidth="240">
+
+    <!--
+        Not a colour, font or margin in this file. Every one of them comes from a theme, merged in
+        at run time by ThemeHost from a file in %LOCALAPPDATA%\GitTabSync\themes — which is what
+        lets a user change the window's appearance, and change it again without a rebuild.
+
+        That is why the lookups are all DynamicResource. A StaticResource here would bind to
+        whichever theme happened to be loaded when the window was built, so switching themes would
+        do nothing until the window was closed and reopened; it would also throw, rather than fall
+        back, if a user's theme left a key out. With DynamicResource a missing key means the
+        control keeps its own default and the window still works. Keep it that way: the contract is
+        written out at the top of Theming\VisualStudio.xaml.
+    -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+
+    <Border Style="{DynamicResource GtsSurfaceStyle}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="{DynamicResource GtsPanelMargin}">
+
+                <!-- Shown when no solution is open, or the solution is not in a git repository. -->
+                <TextBlock x:Name="NoRepository"
+                           Style="{DynamicResource GtsMutedTextStyle}"
+                           Text="No git repository is open. Open a solution inside one to configure it." />
+
+                <StackPanel x:Name="Body" Visibility="Collapsed">
+
+                    <TextBlock Style="{DynamicResource GtsTitleTextStyle}">
+                        <Run Text="{Binding RepositoryName, Mode=OneWay}" />
+                        <Run Text=" · " />
+                        <Run Text="{Binding HeadText, Mode=OneWay}" />
+                    </TextBlock>
+
+                    <TextBlock Style="{DynamicResource GtsHeadingTextStyle}" Text="Setting these for" />
+                    <ComboBox Style="{DynamicResource GtsComboBoxStyle}"
+                              ItemsSource="{Binding Scopes}"
+                              SelectedItem="{Binding SelectedScope, Mode=TwoWay}"
+                              DisplayMemberPath="Label" />
+
+                    <!--
+                        Shared sizing keeps the inline action in one column down the list, and keeps
+                        the space reserved on the rows that have none — so a row's text does not
+                        reflow the moment it is overridden.
+                    -->
+                    <ItemsControl ItemsSource="{Binding Rows}"
+                                  Margin="0,10,0,0"
+                                  Grid.IsSharedSizeScope="True">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="{DynamicResource GtsRowMargin}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="RowAction" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <!--
+                                        IsThreeState binds bool? directly: null is "inherit", which
+                                        is exactly what SettingsResolver.GetOverride returns.
+
+                                        Only the check box is disabled for a setting that does
+                                        nothing yet, never the row. Disabling the row would grey the
+                                        sentence explaining why along with it, and an unreadable
+                                        explanation is worse than no explanation.
+                                    -->
+                                    <CheckBox Grid.Column="0"
+                                              Style="{DynamicResource GtsCheckBoxStyle}"
+                                              IsThreeState="True"
+                                              IsChecked="{Binding Value, Mode=TwoWay}"
+                                              IsEnabled="{Binding IsEditable}" />
+
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Style="{DynamicResource GtsSettingNameTextStyle}"
+                                                   Text="{Binding DisplayName}" />
+                                        <TextBlock Style="{DynamicResource GtsNoteTextStyle}"
+                                                   Text="{Binding EffectiveText}" />
+                                        <TextBlock Style="{DynamicResource GtsNoteTextStyle}"
+                                                   Text="{Binding UnavailableReason}" />
+                                    </StackPanel>
+
+                                    <Button Grid.Column="2"
+                                            Style="{DynamicResource GtsLinkButtonStyle}"
+                                            Content="Inherit"
+                                            Visibility="{Binding IsSetHere, Converter={StaticResource BoolToVisibility}}"
+                                            Click="OnClearRow" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Style="{DynamicResource GtsButtonStyle}"
+                            Content="Restore tabs now"
+                            Click="OnRestoreNow" />
+                    <TextBlock Style="{DynamicResource GtsNoteTextStyle}"
+                               Text="Changing a setting takes effect on the next branch switch. Use this to apply it here." />
+
+                    <TextBlock Style="{DynamicResource GtsHeadingTextStyle}"
+                               Text="Overrides in this repository"
+                               Visibility="{Binding HasOverrides, Converter={StaticResource BoolToVisibility}}" />
+
+                    <ItemsControl ItemsSource="{Binding Overrides}" Grid.IsSharedSizeScope="True">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" SharedSizeGroup="RowAction" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" Style="{DynamicResource GtsMutedTextStyle}">
+                                        <Run Text="{Binding ScopeText, Mode=OneWay}" />
+                                        <Run Text=" — " />
+                                        <Run Text="{Binding SettingText, Mode=OneWay}" />
+                                        <Run Text=" " />
+                                        <Run Text="{Binding ValueText, Mode=OneWay}" />
+                                        <Run Text="{Binding NoteText, Mode=OneWay}" />
+                                    </TextBlock>
+
+                                    <Button Grid.Column="1"
+                                            Style="{DynamicResource GtsLinkButtonStyle}"
+                                            Content="Clear"
+                                            Click="OnClearOverride" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                </StackPanel>
+
+                <!--
+                    Outside Body on purpose: which theme to use is the user's choice about the
+                    window itself, and is answerable with no solution open. It stays visible on the
+                    placeholder above.
+                -->
+                <Separator Style="{DynamicResource GtsSeparatorStyle}" />
+
+                <StackPanel x:Name="Appearance">
+                    <TextBlock Style="{DynamicResource GtsHeadingTextStyle}" Text="Appearance" />
+
+                    <ComboBox Style="{DynamicResource GtsComboBoxStyle}"
+                              ItemsSource="{Binding Themes}"
+                              SelectedItem="{Binding SelectedTheme, Mode=TwoWay}"
+                              DisplayMemberPath="DisplayName" />
+
+                    <TextBlock Style="{DynamicResource GtsNoteTextStyle}" Text="{Binding FolderText}" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Style="{DynamicResource GtsLinkButtonStyle}"
+                                Content="Open themes folder"
+                                Click="OnOpenThemesFolder" />
+                        <Button Style="{DynamicResource GtsLinkButtonStyle}"
+                                Content="Reload themes"
+                                Click="OnReloadThemes" />
+                    </StackPanel>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using GitTabSync.Git;
 using GitTabSync.Model;
+using GitTabSync.Settings;
 using GitTabSync.Storage;
 
 namespace GitTabSync.Sync
@@ -23,6 +24,12 @@ namespace GitTabSync.Sync
     /// (<see cref="CaptureSnapshot"/>, driven by the host's document events) and persists
     /// <em>that</em> against the outgoing branch, never a reading taken at switch time.
     /// </para>
+    /// <para>
+    /// Settings are resolved at each decision, against the head that decision is about, and never
+    /// held. Settings can differ per branch, so a value resolved once and kept would apply the
+    /// outgoing branch's configuration to the incoming one — on the one code path where the two
+    /// heads are guaranteed to differ.
+    /// </para>
     /// </remarks>
     public sealed class TabSyncCoordinator : IDisposable
     {
@@ -30,9 +37,10 @@ namespace GitTabSync.Sync
         private readonly BranchMonitor _monitor;
         private readonly ISessionStore _store;
         private readonly IEditorTabs _editor;
-        private readonly TabSyncOptions _options;
+        private readonly ISyncSettings _settings;
         private readonly ITabSyncLog _log;
         private readonly Func<DateTime> _utcNow;
+        private readonly string? _solutionFilePath;
         private readonly object _gate = new object();
 
         private IReadOnlyList<EditorTab> _snapshot = Array.Empty<EditorTab>();
@@ -46,17 +54,19 @@ namespace GitTabSync.Sync
             BranchMonitor monitor,
             ISessionStore store,
             IEditorTabs editor,
-            TabSyncOptions? options = null,
+            ISyncSettings? settings = null,
             ITabSyncLog? log = null,
-            Func<DateTime>? utcNow = null)
+            Func<DateTime>? utcNow = null,
+            string? solutionFilePath = null)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _monitor = monitor ?? throw new ArgumentNullException(nameof(monitor));
             _store = store ?? throw new ArgumentNullException(nameof(store));
             _editor = editor ?? throw new ArgumentNullException(nameof(editor));
-            _options = options ?? new TabSyncOptions();
+            _settings = settings ?? new TabSyncOptions();
             _log = log ?? NullTabSyncLog.Instance;
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
+            _solutionFilePath = solutionFilePath;
         }
 
         public void Start()
@@ -85,11 +95,23 @@ namespace GitTabSync.Sync
 
             _log.Info(string.Format(CultureInfo.InvariantCulture, "Watching {0} on {1}.", _repository.WorkingDirectory, head));
 
-            if (_options.RestoreOnStartup)
+            if (_settings.IsEnabled(SyncSetting.RestoreOnStartup, ContextFor(head)))
             {
                 Restore(head);
             }
         }
+
+        /// <summary>
+        /// The situation a setting is resolved against.
+        /// </summary>
+        /// <remarks>
+        /// The solution is included because the settings window offers a solution scope, and a
+        /// scope the UI can set but the coordinator does not consult is a control that does
+        /// nothing. Project scope is still absent from both: no document is attributed to its
+        /// owning project yet, so neither end can name one.
+        /// </remarks>
+        private SyncContext ContextFor(GitHead head) =>
+            new SyncContext(_repository.WorkingDirectory, head.SessionKey, _solutionFilePath);
 
         /// <summary>
         /// Refreshes the tracked snapshot of open tabs. The host calls this whenever documents
@@ -127,6 +149,27 @@ namespace GitTabSync.Sync
             {
                 _log.Error("Failed to read the open documents.", e);
             }
+        }
+
+        /// <summary>
+        /// Applies the stored session for the current HEAD now, because the user asked.
+        /// </summary>
+        /// <remarks>
+        /// Every other restore is a reaction to something. This is the only way to ask for one,
+        /// and it is what makes turning tab syncing back on for the branch you are standing on
+        /// take visible effect — doing that implicitly, on a settings change, would rearrange the
+        /// editor while someone was reading a checkbox.
+        /// </remarks>
+        public void RestoreCurrent()
+        {
+            var head = _monitor.Current;
+            if (head is null)
+            {
+                _log.Info("HEAD could not be read; there is nothing to restore.");
+                return;
+            }
+
+            Restore(head);
         }
 
         /// <summary>
@@ -180,6 +223,17 @@ namespace GitTabSync.Sync
 
         private void SaveSnapshotFor(GitHead head)
         {
+            if (!_settings.IsEnabled(SyncSetting.SyncTabs, ContextFor(head)))
+            {
+                // Deliberately does not delete what is already stored, so turning the setting off
+                // means "stop touching this branch" rather than "forget it". What was remembered
+                // survives until the next save for this branch happens with syncing back on.
+                // Capturing carries on regardless: the snapshot is per-repository, costs nothing,
+                // and keeping it current is what makes re-enabling take effect immediately.
+                _log.Info("Tab syncing is off for " + head + "; the stored session was left as it was.");
+                return;
+            }
+
             IReadOnlyList<EditorTab> tabs;
             int activeIndex;
 
@@ -318,6 +372,14 @@ namespace GitTabSync.Sync
 
         private void Restore(GitHead head)
         {
+            var context = ContextFor(head);
+
+            if (!_settings.IsEnabled(SyncSetting.SyncTabs, context))
+            {
+                _log.Info("Tab syncing is off for " + head + "; the open tabs were left alone.");
+                return;
+            }
+
             TabSession? session;
             try
             {
@@ -334,7 +396,7 @@ namespace GitTabSync.Sync
 
             if (session is null)
             {
-                if (!_options.CloseTabsWhenBranchHasNoSession)
+                if (!_settings.IsEnabled(SyncSetting.CloseTabsWhenBranchHasNoSession, context))
                 {
                     _log.Info("No stored session for " + head + "; leaving the open tabs alone.");
                     return;

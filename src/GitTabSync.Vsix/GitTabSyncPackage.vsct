@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <Extern href="stdidcmd.h" />
+  <Extern href="vsshlids.h" />
+
+  <Commands package="guidGitTabSyncPackage">
+    <Buttons>
+      <!-- View > Other Windows > Git Tab Sync. The conventional home for an extension's tool
+           window, and the only way a user can open one: ProvideToolWindow registers the window
+           but gives nothing to click. Invoking this loads the package if it is not loaded. -->
+      <Button guid="guidGitTabSyncCmdSet" id="cmdidSettingsWindow" priority="0x0100" type="Button">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_WNDO_OTRWNDWS1" />
+        <Strings>
+          <ButtonText>Git Tab Sync</ButtonText>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <Symbols>
+    <GuidSymbol name="guidGitTabSyncPackage" value="{b7f0e2a4-3c15-4d8e-9a6b-2f5c8d1e7a30}" />
+
+    <GuidSymbol name="guidGitTabSyncCmdSet" value="{66eb4939-3cb0-4a97-a8c6-967023cd2427}">
+      <IDSymbol name="cmdidSettingsWindow" value="0x0100" />
+    </GuidSymbol>
+  </Symbols>
+
+</CommandTable>

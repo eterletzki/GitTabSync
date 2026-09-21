@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using GitTabSync.Git;
@@ -203,6 +204,13 @@ namespace GitTabSync.Tests
             /// <summary>Generous: a busy machine may be slow, but it may not be wrong.</summary>
             private static readonly TimeSpan Eventually = TimeSpan.FromSeconds(10);
 
+            /// <summary>
+            /// How far ahead of its due time a .NET timer is allowed to fire. The platform's tick
+            /// is about 15.6 ms; twice that is slack enough that rounding never fails a "not before"
+            /// assertion, and far too little to hide a debounce that did not happen.
+            /// </summary>
+            private static readonly TimeSpan TimerGranularity = TimeSpan.FromMilliseconds(32);
+
             [Fact]
             public void A_burst_of_head_writes_produces_a_single_change()
             {
@@ -212,7 +220,11 @@ namespace GitTabSync.Tests
 
                 using var monitor = new BranchMonitor(
                     repository,
-                    debounce: TimeSpan.FromMilliseconds(500),
+                    // A wide margin on purpose: the assertion below is that several writes
+                    // collapse into one report, which a machine stalling for longer than the
+                    // debounce would break in the middle of the burst — by being slow, not wrong.
+                    // The burst takes about 180 ms, so the debounce has to outlast that by a lot.
+                    debounce: TimeSpan.FromMilliseconds(1500),
                     pollInterval: NoPolling);
 
                 using var signal = new ManualResetEventSlim(false);
@@ -246,25 +258,42 @@ namespace GitTabSync.Tests
             [Fact]
             public void A_change_is_not_reported_before_the_debounce_has_elapsed()
             {
+                var debounce = TimeSpan.FromMilliseconds(600);
+
                 using var temp = new TempDirectory();
                 var headPath = temp.CreateFile(".git/HEAD", "ref: refs/heads/main\n");
                 var repository = GitRepository.Discover(temp.Path)!;
 
-                using var monitor = new BranchMonitor(
-                    repository,
-                    debounce: TimeSpan.FromMilliseconds(600),
-                    pollInterval: NoPolling);
+                using var monitor = new BranchMonitor(repository, debounce, pollInterval: NoPolling);
 
                 using var signal = new ManualResetEventSlim(false);
-                monitor.BranchChanged += (_, _) => signal.Set();
+                var stopwatch = new Stopwatch();
+                var reportedAfter = TimeSpan.Zero;
+
+                monitor.BranchChanged += (_, _) =>
+                {
+                    // Assigned before the signal, which is what publishes it to the waiting thread.
+                    reportedAfter = stopwatch.Elapsed;
+                    signal.Set();
+                };
                 monitor.Start();
 
+                stopwatch.Start();
                 File.WriteAllText(headPath, "ref: refs/heads/other\n");
 
-                // Well inside the debounce: HEAD may still be mid-checkout, and reading it now is
-                // what the wait exists to avoid.
-                Assert.False(signal.Wait(TimeSpan.FromMilliseconds(120)), "The change was reported early.");
                 Assert.True(signal.Wait(Eventually), "The branch change was never detected.");
+
+                // Timed at the moment it was reported, rather than sampled from here part-way
+                // through. Sampling is what this test used to do, and it was wrong in the one way
+                // these tests must never be: a thread descheduled past the whole debounce — which a
+                // loaded CI runner does — would see the change already reported and call it early,
+                // turning "slow" into "wrong". A stall can only push the measurement *up*, so the
+                // assertion below fails if and only if the monitor really did report early.
+                Assert.True(
+                    reportedAfter >= debounce - TimerGranularity,
+                    "The change was reported " + reportedAfter.TotalMilliseconds.ToString("F0")
+                        + " ms after the write, inside the " + debounce.TotalMilliseconds.ToString("F0")
+                        + " ms debounce.");
             }
 
             [Fact]

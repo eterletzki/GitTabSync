@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using GitTabSync.Sync;
 using GitTabSync.Tests.TestSupport;
@@ -12,9 +13,16 @@ namespace GitTabSync.Tests
     /// </summary>
     /// <remarks>
     /// These run against real timers rather than an injected clock. The thing under test *is*
-    /// elapsed time, and a fake clock would prove only that the arithmetic is right. The
-    /// assertions are one-sided to stay honest on a loaded machine: "not yet, far too early" uses
-    /// a fraction of the delay, and "eventually" waits far longer than it should ever need.
+    /// elapsed time, and a fake clock would prove only that the arithmetic is right.
+    /// <para>
+    /// The assertions are one-sided so a loaded machine is allowed to be slow but never reported as
+    /// wrong, and "one-sided" has a specific meaning here. "Eventually" waits far longer than it
+    /// should ever need. "Not before" is <em>timed</em> — the moment something happened is compared
+    /// against the delay — and never <em>sampled</em>, because sampling asks "has it happened yet?"
+    /// from a thread the scheduler can deschedule past the entire delay, and then reports a late
+    /// test as an early capture. Where a test cannot be phrased as a measurement, its margin is
+    /// made wide enough that a stall of that length would be absurd, and says so.
+    /// </para>
     /// </remarks>
     public sealed class CaptureSchedulerTests
     {
@@ -26,6 +34,13 @@ namespace GitTabSync.Tests
 
         /// <summary>Generous, because a busy CI machine is allowed to be slow, not wrong.</summary>
         private static readonly TimeSpan Eventually = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// How far ahead of its due time a .NET timer is allowed to fire. The platform's tick is
+        /// about 15.6 ms; twice that is slack enough that rounding never fails a "not before"
+        /// assertion, and far too little to hide a wait that did not happen.
+        /// </summary>
+        private static readonly TimeSpan TimerGranularity = TimeSpan.FromMilliseconds(32);
 
         [Fact]
         public void The_documented_delays_are_what_the_code_actually_uses()
@@ -44,15 +59,23 @@ namespace GitTabSync.Tests
             var captures = new Counter();
             using var scheduler = new CaptureScheduler(captures.Increment, Delay);
 
+            var startedAt = Stopwatch.GetTimestamp();
             scheduler.Schedule();
 
-            // Reading the editor the instant a document event arrives is the bug the delay
-            // exists to prevent: the document is still half-open at that point.
-            Assert.Equal(0, captures.Count);
-            Thread.Sleep(FarTooEarly);
-            Assert.Equal(0, captures.Count);
-
             Assert.True(captures.WaitForAtLeast(1, Eventually), "The scheduled capture never ran.");
+
+            // Reading the editor the instant a document event arrives is the bug the delay exists
+            // to prevent: the document is still half-open at that point.
+            //
+            // Timed at the moment the capture ran rather than sampled part-way through the delay.
+            // Sampling asks "has it happened yet?" from a thread that a loaded machine can
+            // deschedule past the whole delay, which reports a late test as an early capture — the
+            // one way these tests are not allowed to be wrong. A stall can only push this
+            // measurement up, so it fails only if the capture really was early.
+            Assert.True(
+                captures.FirstRanAfter(startedAt) >= Delay - TimerGranularity,
+                "The capture ran " + captures.FirstRanAfter(startedAt).TotalMilliseconds.ToString("F0")
+                    + " ms in, inside the " + Delay.TotalMilliseconds.ToString("F0") + " ms delay.");
         }
 
         [Fact]
@@ -78,7 +101,14 @@ namespace GitTabSync.Tests
         public void Each_schedule_pushes_the_capture_further_out()
         {
             var captures = new Counter();
-            using var scheduler = new CaptureScheduler(captures.Increment, Delay);
+
+            // A much longer delay than the other tests use, and it costs nothing: this test never
+            // waits for the delay to elapse, it only shows that it does not. The margin is the
+            // point — the assertion is "nothing captured while events kept arriving", which a
+            // machine that stalls for longer than the delay would break by being slow rather than
+            // by being wrong. Five 80 ms gaps cannot stretch past four seconds.
+            var delay = TimeSpan.FromSeconds(4);
+            using var scheduler = new CaptureScheduler(captures.Increment, delay);
 
             // Events arriving steadily, none of them further apart than the delay: the editor is
             // never quiet, so it is never read.
@@ -207,14 +237,31 @@ namespace GitTabSync.Tests
         {
             private readonly ManualResetEventSlim _changed = new ManualResetEventSlim(false);
             private int _count;
+            private long _firstAt;
 
             public int Count => Volatile.Read(ref _count);
 
             public void Increment()
             {
+                // Stamped before the count is published, so a reader that has seen the count has
+                // seen the timestamp too.
+                if (Count == 0)
+                {
+                    Volatile.Write(ref _firstAt, Stopwatch.GetTimestamp());
+                }
+
                 Interlocked.Increment(ref _count);
                 _changed.Set();
             }
+
+            /// <summary>
+            /// How long after <paramref name="startedAt"/> the first capture ran. Lets a test time
+            /// what happened instead of sampling whether it has happened yet, which is the
+            /// difference between an assertion a loaded machine can only make slower and one it can
+            /// make fail.
+            /// </summary>
+            public TimeSpan FirstRanAfter(long startedAt) =>
+                TimeSpan.FromSeconds((Volatile.Read(ref _firstAt) - startedAt) / (double)Stopwatch.Frequency);
 
             public bool WaitForAtLeast(int count, TimeSpan timeout)
             {

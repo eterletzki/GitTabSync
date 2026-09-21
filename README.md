@@ -35,8 +35,9 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 118 passing tests, including tests that drive the real `git` executable. |
-| Visual Studio integration | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
+| Branch detection, storage, save/restore decisions | Implemented, 224 passing tests, including tests that drive the real `git` executable. |
+| Scoped settings (defaults → repository → branch → solution) | Implemented and tested in the core, including the window's view model. |
+| Visual Studio integration, including the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
 
@@ -55,16 +56,84 @@ a git repository.
 
 ## Settings
 
-**Tools → Options → Git Tab Sync → General**
+**View → Other Windows → Git Tab Sync**
 
-| Setting | Default | Effect |
-|---|---|---|
-| Close tabs on an unvisited branch | Off | When switching to a branch with no remembered tabs, close everything instead of leaving the current tabs open. |
-| Restore tabs when a solution opens | On | Restore the remembered tabs for the current branch as soon as a solution is opened, rather than waiting for a branch switch. |
+| Setting | Default | Set at | Effect |
+|---|---|---|---|
+| Tabs | On | any level | Remember which documents are open and restore them. Off means this branch is left alone entirely. |
+| Bookmarks | Off | any level | *Not implemented yet — the setting is stored but does nothing.* |
+| Breakpoints | Off | any level | *Not implemented yet — as above.* |
+| Close tabs on an unvisited branch | Off | **repository or Defaults** | Arriving on a branch with nothing remembered closes the open tabs instead of leaving them. |
+| Restore when a solution opens | On | any level | Restore as soon as a solution is opened, rather than waiting for a branch switch. |
 
 Closing tabs on an unvisited branch is off by default because *every* branch is unvisited the first
 time you use the extension — defaulting it on would wipe your tabs the first time you tried it. The
 cost of leaving it off is some tab bleed between branches, which the next save corrects.
+
+It is also the one setting that is **not** set per branch. It only ever has an effect when you
+arrive on a branch with nothing stored, and the only branch the window can configure is the one you
+are on — which by then has a session. A per-branch value for it could be stored and could never
+fire, so the window offers it on **This repository** and **Defaults** only, and says so at the other
+levels rather than showing a toggle that would do nothing.
+
+
+### Scopes
+
+A branch is the unit settings reach over. A setting can be set at five levels, each narrowing the
+one above it:
+
+| Level | Applies to |
+|---|---|
+| Defaults | every repository |
+| This repository | every branch of this repository |
+| **Branch** | one branch — the default granularity |
+| Solution | one solution, on that branch |
+| Project | one project, on that branch — **not reachable yet**, see [Limitations](#limitations) |
+
+A setting may stop short of the narrowest levels — see the **Set at** column above. Where it does,
+the window still shows the row and what applies, with the toggle disabled and the reason beside it;
+an override stored at such a level (by hand, say) is ignored rather than obeyed, and stays in the
+overrides list marked *stored, but not used at this level* so you can clear it.
+
+Each setting at each level is on, off, or **inherit**. Inherit is a real third state rather than a
+default value: "off on this branch" and "nothing set on this branch" are different, and only the
+first survives someone later turning the setting on for the whole repository.
+
+The window shows the value that actually applies *and which level decided it* — "Off, inherited from
+Defaults" reads differently from "Off, set here", and a value coming from a level narrower than the
+one you are looking at says "overridden on …" rather than pretending you are in control of it.
+
+Changing a setting takes effect at the next branch switch. **Restore tabs now** applies it to the
+branch you are already on, since nothing else would trigger it. The window also lists every override
+stored for the repository — including ones on branches you are not currently on, which are otherwise
+exactly the ones that get forgotten and later look like a bug.
+
+Settings are per-user, not per-team: they are stored outside the working tree (see below) and are
+never committed.
+
+### Appearance
+
+The window's own styling is a theme: a WPF `ResourceDictionary` read at run time from
+`%LOCALAPPDATA%\GitTabSync\themes`. Three ship with the extension and are written into that folder
+the first time it runs:
+
+| Theme | |
+|---|---|
+| **Visual Studio** | The default. Takes every colour, font and control style from the IDE, so it follows whichever theme Visual Studio is in. |
+| **Compact** | The same, tightened for a narrow docked window. Built by merging `VisualStudio.xaml` and overriding a handful of keys. |
+| **Plain** | No Visual Studio types at all — plain WPF and the system colours. The easiest file to copy, and the one the window falls back to if another theme fails to load. |
+
+**To add your own, copy one of those files, rename the copy and edit it.** It appears in the picker
+after **Reload themes**; the file name is the theme's identity and the `GtsThemeName` entry inside
+it is the label. A key you leave out is simply not applied, so a partial theme is a valid theme, and
+a file that does not parse is reported in the **Git Tab Sync** output pane and skipped rather than
+breaking the window. The full list of keys is written out at the top of `VisualStudio.xaml`.
+
+Editing one of the shipped files is fine: they are only rewritten when they are *missing*, so an
+edit survives, and deleting one gets the original back.
+
+Unlike everything above, the theme is not scoped — it is one choice for all repositories, stored in
+`ui.json` beside the defaults.
 
 ## How it works
 
@@ -145,8 +214,16 @@ would show as a pending change on every branch switch.
 
 ```
 %LOCALAPPDATA%\GitTabSync\
+├── settings.json                           the Defaults level, shared by every repository
+├── ui.json                                 the chosen theme
+├── themes\                                 one .xaml file per theme, yours included
+│   ├── VisualStudio.xaml
+│   ├── Compact.xaml
+│   ├── Plain.xaml
+│   └── README.txt
 └── repos\
     └── gittabsync-3f9a1c7d5e2b40a8\        one directory per repository
+        ├── settings.json                   repository, branch and solution overrides
         ├── branch_main-8c1d02e4f7a9b365.json
         ├── branch_feature_login-2b7e4a10c9d8f3e6.json
         └── detached_9f2c1d645f7a4a3b8c2e6d4b0e1a7c5-5a3e7b092c14d8f6.json
@@ -163,6 +240,15 @@ A session file:
 {"schema":1,"head":"branch\/main","savedAtUtc":"2026-08-09T10:14:32.1174820Z","activeIndex":1,
  "tabs":[{"path":"src\/GitTabSync.Core\/Git\/GitHead.cs","relative":true,"line":42,"column":9,"pinned":true},
          {"path":"README.md","relative":true,"line":1,"column":1,"pinned":false}]}
+```
+
+A settings file, holding only what has been explicitly set — a level that inherits everything
+writes nothing, which is how "off here" stays distinguishable from "not set here":
+
+```json
+{"schema":1,"scopes":[
+  {"kind":"Branch","head":"branch\/release\/1.0.1","path":"",
+   "values":[{"setting":"syncTabs","on":false}]}]}
 ```
 
 Paths inside the repository are stored relative with `/` separators, so sessions survive the
@@ -203,7 +289,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 118 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 224 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -220,8 +306,14 @@ Notable types:
 | [TabSyncCoordinator.cs](src/GitTabSync.Core/Sync/TabSyncCoordinator.cs) | Holds the snapshot; decides what to save and restore. |
 | [TabSessionMapper.cs](src/GitTabSync.Core/Sync/TabSessionMapper.cs) | Editor tabs ⇄ persisted session; drops missing files. |
 | [FileSessionStore.cs](src/GitTabSync.Core/Storage/FileSessionStore.cs) | JSON sessions under `%LOCALAPPDATA%`. |
+| [SettingsResolver.cs](src/GitTabSync.Core/Settings/SettingsResolver.cs) | Walks the scope cascade; reports the value *and* which level decided. |
+| [SettingsViewModel.cs](src/GitTabSync.Core/Settings/SettingsViewModel.cs) | Everything the settings window shows — in the core, so it is tested. |
+| [ThemeLibrary.cs](src/GitTabSync.Core/Theming/ThemeLibrary.cs) | Finds themes in the themes folder, writes the built-in ones out, remembers the choice. |
 | [VsEditorTabs.cs](src/GitTabSync.Vsix/VsEditorTabs.cs) | The only file that touches editor windows. |
 | [RepositorySyncSession.cs](src/GitTabSync.Vsix/RepositorySyncSession.cs) | Everything alive while one repository is open. |
+| [SettingsWindowControl.xaml](src/GitTabSync.Vsix/SettingsWindowControl.xaml) | The window itself: bindings and themed styles. No decisions, and no colours. |
+| [ThemeHost.cs](src/GitTabSync.Vsix/Theming/ThemeHost.cs) | Parses a theme file and dresses the window in it — the only part of theming that needs WPF. |
+| [VisualStudio.xaml](src/GitTabSync.Vsix/Theming/VisualStudio.xaml) | The default theme, and where the key contract a theme may define is written out. |
 
 Serialisation uses `DataContractJsonSerializer`, chosen over Newtonsoft and System.Text.Json so the
 VSIX ships no extra assemblies and cannot hit binding-redirect conflicts with the copies Visual
@@ -250,9 +342,11 @@ They skip when git is not on PATH.
 debounce, the 5 s poll, the 300 ms capture debounce, and the pin path that skips it. They run
 against real timers for the same reason the rest run against real files: the thing under test *is*
 elapsed time, and a fake clock would prove only that the arithmetic is right. Each test disables
-one detector so the other has to do the work, and the assertions are one-sided — "not yet" at a
-fraction of the delay, "eventually" with ten seconds of headroom — so a loaded machine is allowed
-to be slow without being reported as broken.
+one detector so the other has to do the work, and the assertions are one-sided so a loaded machine
+is allowed to be slow without being reported as broken: "eventually" has ten seconds of headroom,
+and "not before" is *timed* — the moment something happened is measured and compared against the
+delay — rather than sampled part way through, which is an assertion a stalled thread can fail
+without anything being wrong.
 
 ## Troubleshooting
 
@@ -268,7 +362,13 @@ did not load — check **Extensions → Manage Extensions**.
 ## Limitations
 
 - **The Visual Studio layer has never been run in Visual Studio.** Everything in
-  `src/GitTabSync.Vsix` is unverified.
+  `src/GitTabSync.Vsix` is unverified, the settings window included — it builds and registers, and
+  that is the whole of the evidence.
+- **Project-level settings cannot be set yet.** The level resolves and persists, but no document is
+  attributed to its owning project, so the window has no project to offer.
+- **Themes are not watched.** A theme file edited while the window is open is picked up by **Reload
+  themes**, not on save — a file being written is a normal state while somebody is editing one, and
+  re-dressing the window on every keystroke would make writing a theme harder, not easier.
 - **Tab order is approximate.** `IVsUIShell.GetDocumentWindowEnum` does not promise tab order, and
   restore reopens documents rather than rebuilding the layout. Split panes and tab groups are not
   captured.
@@ -289,5 +389,6 @@ did not load — check **Extensions → Manage Extensions**.
 2. Higher-fidelity layout, if it proves worth it. `IVsUIShellDocumentWindowMgr`
    (`SaveDocumentWindowPositions` / `ReopenDocumentWindows`) persists the real layout as an opaque
    blob — the tradeoff is losing the ability to filter out files missing on the target branch.
-3. Open Folder support.
-4. Bookmarks, then breakpoints.
+3. Project-level settings, which need every document attributed to its owning project.
+4. Open Folder support.
+5. Bookmarks, then breakpoints — the settings, storage and cascade for them already exist.

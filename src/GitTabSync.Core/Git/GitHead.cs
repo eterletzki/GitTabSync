@@ -25,11 +25,17 @@ namespace GitTabSync.Git
 
         public bool IsDetached { get; }
 
+        /// <summary>Prefixes <see cref="SessionKey"/>, exposed so display code can strip them.</summary>
+        public const string BranchPrefix = "branch/";
+
+        /// <inheritdoc cref="BranchPrefix"/>
+        public const string DetachedPrefix = "detached/";
+
         /// <summary>
         /// Stable identity used to key stored sessions. Prefixed so that a branch literally
         /// named after a commit id cannot collide with the detached state at that commit.
         /// </summary>
-        public string SessionKey => IsDetached ? "detached/" + Reference : "branch/" + Reference;
+        public string SessionKey => IsDetached ? DetachedPrefix + Reference : BranchPrefix + Reference;
 
         public static GitHead Branch(string name)
         {

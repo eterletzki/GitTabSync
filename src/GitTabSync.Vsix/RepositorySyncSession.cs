@@ -1,6 +1,7 @@
 using System;
 using EnvDTE;
 using GitTabSync.Git;
+using GitTabSync.Settings;
 using GitTabSync.Storage;
 using GitTabSync.Sync;
 using Microsoft.VisualStudio;
@@ -29,8 +30,11 @@ namespace GitTabSync
 
         private const int PinTabCommandId = (int)VSConstants.VSStd11CmdID.PinTab;
 
+        private readonly GitRepository _repository;
         private readonly BranchMonitor _monitor;
         private readonly TabSyncCoordinator _coordinator;
+        private readonly SettingsResolver _settings;
+        private readonly string? _solutionFilePath;
         private readonly IVsRunningDocumentTable? _runningDocumentTable;
         private readonly CaptureScheduler _captureScheduler;
         private readonly ITabSyncLog _log;
@@ -46,19 +50,27 @@ namespace GitTabSync
         private bool _disposed;
 
         private RepositorySyncSession(
+            GitRepository repository,
             BranchMonitor monitor,
             TabSyncCoordinator coordinator,
+            SettingsResolver settings,
+            string? solutionFilePath,
             IVsRunningDocumentTable? runningDocumentTable,
             DTE? dte,
             ITabSyncLog log)
         {
+            _repository = repository;
             _monitor = monitor;
             _coordinator = coordinator;
+            _settings = settings;
+            _solutionFilePath = solutionFilePath;
             _runningDocumentTable = runningDocumentTable;
             _log = log;
             _captureScheduler = new CaptureScheduler(coordinator.CaptureSnapshot, log: log);
 
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            _monitor.BranchChanged += OnBranchChanged;
 
             if (_runningDocumentTable is not null)
             {
@@ -69,15 +81,46 @@ namespace GitTabSync
         }
 
         /// <summary>
+        /// Raised after HEAD moves, on a <em>timer thread</em>. Subscribers touching UI must
+        /// marshal; this is a pass-through of <see cref="BranchMonitor.BranchChanged"/> and adds no
+        /// thread affinity of its own.
+        /// </summary>
+        public event EventHandler<BranchChangedEventArgs>? BranchChanged;
+
+        public GitRepository Repository => _repository;
+
+        /// <summary>The scoped settings for this repository, shared with the coordinator.</summary>
+        public SettingsResolver Settings => _settings;
+
+        public GitHead? CurrentHead => _monitor.Current;
+
+        /// <summary>Where the settings UI is: this repository, this head, this solution.</summary>
+        public SyncContext CurrentContext =>
+            new SyncContext(_repository.WorkingDirectory, CurrentHead?.SessionKey ?? string.Empty, _solutionFilePath);
+
+        private void OnBranchChanged(object sender, BranchChangedEventArgs e)
+        {
+            try
+            {
+                BranchChanged?.Invoke(this, e);
+            }
+            catch (Exception exception)
+            {
+                // Timer thread: an escape here would take Visual Studio down.
+                _log.Error("A branch change listener failed.", exception);
+            }
+        }
+
+        /// <summary>
         /// Starts syncing for the repository containing <paramref name="pathInsideRepository"/>.
         /// Returns <c>null</c> when that path is not in a git repository, which is the normal
         /// case for a solution that is not version controlled.
         /// </summary>
         public static RepositorySyncSession? TryCreate(
             string pathInsideRepository,
+            string? solutionFilePath,
             IServiceProvider serviceProvider,
             JoinableTaskFactory joinableTaskFactory,
-            TabSyncOptions options,
             ITabSyncLog log)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
@@ -91,12 +134,19 @@ namespace GitTabSync
 
             var monitor = new BranchMonitor(repository);
             var editor = new VsEditorTabs(serviceProvider, joinableTaskFactory, log);
+
+            // The resolver is built here rather than by the package because it is keyed on the
+            // repository, which is not known until Discover has run. The settings window is handed
+            // this same instance, so a toggle there is the one the coordinator reads.
+            var settings = new SettingsResolver(new FileSettingsStore(), repository.WorkingDirectory, log);
             var coordinator = new TabSyncCoordinator(
-                repository, monitor, new FileSessionStore(), editor, options, log);
+                repository, monitor, new FileSessionStore(), editor, settings, log,
+                solutionFilePath: solutionFilePath);
 
             var runningDocumentTable = serviceProvider.GetService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
             var dte = serviceProvider.GetService(typeof(SDTE)) as DTE;
-            var session = new RepositorySyncSession(monitor, coordinator, runningDocumentTable, dte, log);
+            var session = new RepositorySyncSession(
+                repository, monitor, coordinator, settings, solutionFilePath, runningDocumentTable, dte, log);
 
             coordinator.Start();
             return session;
@@ -106,6 +156,9 @@ namespace GitTabSync
         public void CheckForBranchChange() => _monitor.CheckNow();
 
         public void SaveCurrentSession() => _coordinator.SaveCurrentSession();
+
+        /// <summary>Applies the current branch's stored session now, because the user asked.</summary>
+        public void RestoreNow() => _coordinator.RestoreCurrent();
 
         private CommandEvents? SubscribeToPinTab(DTE? dte)
         {
@@ -193,6 +246,8 @@ namespace GitTabSync
             _disposed = true;
 
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            _monitor.BranchChanged -= OnBranchChanged;
 
             if (_pinTabCommandEvents is not null)
             {

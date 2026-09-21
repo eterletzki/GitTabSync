@@ -1,0 +1,118 @@
+<!--
+    Git Tab Sync theme: Plain.
+
+    Deliberately uses no Visual Studio types at all — only WPF and the system colours. That makes
+    it two things: the easiest file to copy when writing a theme of your own, and the one the
+    window falls back to if another theme cannot be loaded, since there is nothing in here that can
+    fail to resolve.
+
+    The trade is that it follows Windows rather than the IDE, so it will not track the Visual Studio
+    theme the way VisualStudio.xaml does.
+
+    See VisualStudio.xaml for the full list of keys a theme can define. Any key left out here is
+    simply not applied, and the control keeps its own default.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=mscorlib">
+
+    <sys:String x:Key="GtsThemeName">Plain</sys:String>
+
+    <Thickness x:Key="GtsPanelMargin">12</Thickness>
+    <Thickness x:Key="GtsRowMargin">0,0,0,10</Thickness>
+    <Thickness x:Key="GtsGroupMargin">0,14,0,4</Thickness>
+
+    <Style x:Key="GtsSurfaceStyle" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" />
+        <Setter Property="TextElement.Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}" />
+    </Style>
+
+    <Style x:Key="GtsTitleTextStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="GtsHeadingTextStyle" TargetType="TextBlock">
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="Margin" Value="{DynamicResource GtsGroupMargin}" />
+    </Style>
+
+    <!-- The DataContext of this one is the setting row, so it can react to what the row is. -->
+    <Style x:Key="GtsSettingNameTextStyle" TargetType="TextBlock">
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Style.Triggers>
+            <DataTrigger Binding="{Binding IsEditable}" Value="False">
+                <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+            </DataTrigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GtsMutedTextStyle" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="GtsNoteTextStyle" TargetType="TextBlock" BasedOn="{StaticResource GtsMutedTextStyle}">
+        <Setter Property="Margin" Value="0,1,0,0" />
+        <Style.Triggers>
+            <!-- Both, because an unset binding leaves null and a bound empty string leaves "". -->
+            <Trigger Property="Text" Value="">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </Trigger>
+            <Trigger Property="Text" Value="{x:Null}">
+                <Setter Property="Visibility" Value="Collapsed" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="GtsSeparatorStyle" TargetType="Separator">
+        <Setter Property="Margin" Value="0,14,0,0" />
+    </Style>
+
+    <Style x:Key="GtsComboBoxStyle" TargetType="ComboBox" />
+
+    <Style x:Key="GtsCheckBoxStyle" TargetType="CheckBox">
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="Margin" Value="0,2,8,0" />
+    </Style>
+
+    <Style x:Key="GtsButtonStyle" TargetType="Button">
+        <Setter Property="Padding" Value="10,3" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="Margin" Value="0,6,0,0" />
+    </Style>
+
+    <Style x:Key="GtsLinkButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="4,0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="VerticalAlignment" Value="Top" />
+        <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HotTrackBrushKey}}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <TextBlock x:Name="Text"
+                                   Text="{TemplateBinding Content}"
+                                   Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Text" Property="TextDecorations" Value="Underline" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Text"
+                                    Property="Foreground"
+                                    Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

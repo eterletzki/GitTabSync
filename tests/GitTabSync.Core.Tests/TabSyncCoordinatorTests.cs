@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using GitTabSync.Git;
+using GitTabSync.Settings;
 using GitTabSync.Storage;
 using GitTabSync.Sync;
 using GitTabSync.Tests.TestSupport;
@@ -14,6 +15,7 @@ namespace GitTabSync.Tests
         private readonly TempDirectory _repo = new TempDirectory("repo");
         private readonly FakeEditorTabs _editor = new FakeEditorTabs();
         private readonly InMemorySessionStore _store = new InMemorySessionStore();
+        private readonly InMemorySettingsStore _settingsStore = new InMemorySettingsStore();
         private readonly RecordingTabSyncLog _log = new RecordingTabSyncLog();
         private readonly string _headPath;
         private readonly GitRepository _repository;
@@ -27,7 +29,7 @@ namespace GitTabSync.Tests
             _repository = GitRepository.Discover(_repo.Path)!;
         }
 
-        private TabSyncCoordinator Start(TabSyncOptions? options = null)
+        private TabSyncCoordinator Start(ISyncSettings? settings = null, string? solutionFilePath = null)
         {
             _monitor = new BranchMonitor(_repository, pollInterval: TimeSpan.Zero);
             _coordinator = new TabSyncCoordinator(
@@ -35,11 +37,23 @@ namespace GitTabSync.Tests
                 _monitor,
                 _store,
                 _editor,
-                options ?? new TabSyncOptions { RestoreOnStartup = false },
-                _log);
+                settings ?? new TabSyncOptions { RestoreOnStartup = false },
+                _log,
+                solutionFilePath: solutionFilePath);
 
             _coordinator.Start();
             return _coordinator;
+        }
+
+        /// <summary>
+        /// A scoped resolver configured like the default <see cref="TabSyncOptions"/> above, so a
+        /// test that swaps one for the other is only changing the thing it is about.
+        /// </summary>
+        private SettingsResolver Scoped()
+        {
+            var resolver = new SettingsResolver(_settingsStore, _repo.Path);
+            resolver.Set(SettingScope.Repository, SyncSetting.RestoreOnStartup, false);
+            return resolver;
         }
 
         private void SwitchTo(string branch)
@@ -397,6 +411,257 @@ namespace GitTabSync.Tests
             SwitchTo("feature");
 
             Assert.Equal(0, _store.SaveCount);
+        }
+
+        // ---- scoped settings ----
+        //
+        // The coordinator resolves settings per decision, against the head that decision is about.
+        // These drive that through the real resolver rather than a flat TabSyncOptions, because
+        // the bug they exist to catch — resolving once and keeping the answer — is invisible to
+        // any setting that cannot differ between two branches.
+
+        [Fact]
+        public void A_branch_with_tab_syncing_off_is_left_alone_on_arrival()
+        {
+            var a = File_("src/A.cs");
+            File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/feature"), SyncSetting.SyncTabs, false);
+
+            var coordinator = Start(settings);
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/feature",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            SwitchTo("feature");
+
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+            Assert.Equal(0, _editor.ApplyCallCount);
+
+            // Only the incoming branch opted out; the outgoing one is still saved as normal.
+            Assert.NotNull(_store.Get(_repo.Path, "branch/main"));
+        }
+
+        [Fact]
+        public void A_branch_with_tab_syncing_off_keeps_the_session_it_already_had()
+        {
+            var a = File_("src/A.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/main"), SyncSetting.SyncTabs, false);
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs = { new Model.TabEntry { Path = "src/FromBefore.cs", IsRepositoryRelative = true } },
+            });
+
+            var coordinator = Start(settings);
+            coordinator.CaptureSnapshot();
+
+            SwitchTo("feature");
+
+            // Turning syncing off means "stop touching this", not "forget what you knew" — the
+            // stored session has to survive so turning it back on is not a fresh start.
+            Assert.Equal("src/FromBefore.cs", _store.Get(_repo.Path, "branch/main")!.Tabs.Single().Path);
+        }
+
+        [Fact]
+        public void Turning_tab_syncing_off_for_one_branch_leaves_the_others_syncing()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/quiet"), SyncSetting.SyncTabs, false);
+
+            var coordinator = Start(settings);
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/feature",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            SwitchTo("feature");
+
+            Assert.Equal(new[] { b }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        [Fact]
+        public void Settings_are_resolved_at_each_switch_not_captured_when_the_session_starts()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/feature"), SyncSetting.SyncTabs, false);
+
+            var coordinator = Start(settings);
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/feature",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            SwitchTo("feature");
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+
+            SwitchTo("main");
+
+            // The user changes their mind without restarting Visual Studio, from another branch.
+            // A coordinator holding the answer it resolved at startup would go on ignoring this
+            // branch forever — and worse, would apply the outgoing branch's settings to the
+            // incoming one on every switch, which is the one code path where the two heads always
+            // differ.
+            settings.Set(SettingScope.Branch("branch/feature"), SyncSetting.SyncTabs, null);
+
+            SwitchTo("feature");
+
+            Assert.Equal(new[] { b }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        /// <summary>
+        /// This one is set for the repository or in the defaults and nowhere narrower, so it
+        /// applies to every unvisited branch rather than to one chosen in advance — which could
+        /// never have worked, because a branch-scoped value could only apply the first time you
+        /// arrived there, and that is before you could have set it.
+        /// </summary>
+        [Fact]
+        public void Closing_tabs_on_an_unvisited_branch_is_set_for_the_whole_repository()
+        {
+            var a = File_("src/A.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Repository, SyncSetting.CloseTabsWhenBranchHasNoSession, true);
+
+            var coordinator = Start(settings);
+            coordinator.CaptureSnapshot();
+
+            SwitchTo("other");
+            Assert.Empty(_editor.Open);
+
+            // And again on the next unvisited branch, from a fresh set of tabs.
+            _editor.SetOpen(a);
+            coordinator.CaptureSnapshot();
+
+            SwitchTo("scratch");
+            Assert.Empty(_editor.Open);
+        }
+
+        [Fact]
+        public void Closing_tabs_on_an_unvisited_branch_cannot_be_turned_on_for_one_branch()
+        {
+            var settings = Scoped();
+
+            Assert.Throws<ArgumentException>(() => settings.Set(
+                SettingScope.Branch("branch/scratch"),
+                SyncSetting.CloseTabsWhenBranchHasNoSession,
+                true));
+        }
+
+        [Fact]
+        public void A_solution_scoped_override_is_honoured_by_the_coordinator()
+        {
+            var a = File_("src/A.cs");
+            File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var solution = _repo.CreateFile("GitTabSync.slnx", "<Solution />");
+            var settings = Scoped();
+            settings.Set(
+                SettingScope.Solution("branch/feature", "GitTabSync.slnx"),
+                SyncSetting.SyncTabs,
+                false);
+
+            var coordinator = Start(settings, solutionFilePath: solution);
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/feature",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            SwitchTo("feature");
+
+            // The settings window offers a solution scope. A scope the UI can set but the
+            // coordinator never consults is a control that does nothing.
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        [Fact]
+        public void RestoreCurrent_applies_the_stored_session_on_request()
+        {
+            var a = File_("src/A.cs");
+            var b = File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var coordinator = Start();
+            coordinator.CaptureSnapshot();
+
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            // The only restore that is not a reaction to something. Turning tab syncing back on
+            // for the branch you are standing on has nothing to react to, and rearranging the
+            // editor the moment a checkbox changed would be worse than a button.
+            coordinator.RestoreCurrent();
+
+            Assert.Equal(new[] { b }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+        }
+
+        [Fact]
+        public void RestoreCurrent_does_nothing_when_head_cannot_be_read()
+        {
+            File.WriteAllText(_headPath, string.Empty);
+            var a = File_("src/A.cs");
+            _editor.SetOpen(a);
+
+            var coordinator = Start();
+            coordinator.RestoreCurrent();
+
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+            Assert.Equal(0, _editor.ApplyCallCount);
+        }
+
+        [Fact]
+        public void RestoreCurrent_still_respects_a_branch_with_tab_syncing_off()
+        {
+            var a = File_("src/A.cs");
+            File_("src/B.cs");
+            _editor.SetOpen(a);
+
+            var settings = Scoped();
+            settings.Set(SettingScope.Branch("branch/main"), SyncSetting.SyncTabs, false);
+
+            var coordinator = Start(settings);
+            _store.Save(_repo.Path, new Model.TabSession
+            {
+                HeadKey = "branch/main",
+                Tabs = { new Model.TabEntry { Path = "src/B.cs", IsRepositoryRelative = true } },
+            });
+
+            coordinator.RestoreCurrent();
+
+            // Asking for a restore is not a way round the setting; it is a way to apply it.
+            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
         }
 
         // ---- failures ----
