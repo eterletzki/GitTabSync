@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.Serialization.Json;
 using System.Text;
@@ -24,6 +25,12 @@ namespace GitTabSync.Settings
         /// </remarks>
         private const string SettingsFileName = "settings.json";
 
+        /// <summary>
+        /// Appearance preferences. Beside the defaults rather than under a repository, because
+        /// they are the user's and are asked for before any solution is open.
+        /// </summary>
+        private const string PreferencesFileName = "ui.json";
+
         private readonly string _rootDirectory;
 
         /// <param name="rootDirectory">
@@ -36,17 +43,28 @@ namespace GitTabSync.Settings
 
         public string RootDirectory => _rootDirectory;
 
-        public ScopedSettings LoadDefaults() => ReadFile(GetDefaultsFilePath());
+        public ScopedSettings LoadDefaults() => ReadScopedSettings(GetDefaultsFilePath());
 
         public void SaveDefaults(ScopedSettings settings) => WriteFile(GetDefaultsFilePath(), settings);
 
         public ScopedSettings Load(string repositoryWorkingDirectory) =>
-            ReadFile(GetRepositoryFilePath(repositoryWorkingDirectory));
+            ReadScopedSettings(GetRepositoryFilePath(repositoryWorkingDirectory));
 
         public void Save(string repositoryWorkingDirectory, ScopedSettings settings) =>
             WriteFile(GetRepositoryFilePath(repositoryWorkingDirectory), settings);
 
+        public UiPreferences LoadPreferences() =>
+            ReadFile<UiPreferences>(
+                GetPreferencesFilePath(),
+                document => document.SchemaVersion > UiPreferences.CurrentSchemaVersion,
+                Repair);
+
+        public void SavePreferences(UiPreferences preferences) =>
+            WriteFile(GetPreferencesFilePath(), preferences);
+
         internal string GetDefaultsFilePath() => Path.Combine(_rootDirectory, SettingsFileName);
+
+        internal string GetPreferencesFilePath() => Path.Combine(_rootDirectory, PreferencesFileName);
 
         internal string GetRepositoryFilePath(string repositoryWorkingDirectory)
         {
@@ -54,42 +72,68 @@ namespace GitTabSync.Settings
             return Path.Combine(_rootDirectory, "repos", repositoryKey, SettingsFileName);
         }
 
-        private static ScopedSettings ReadFile(string path)
+        private static ScopedSettings ReadScopedSettings(string path) =>
+            ReadFile<ScopedSettings>(
+                path,
+                document => document.SchemaVersion > ScopedSettings.CurrentSchemaVersion,
+                Repair);
+
+        /// <remarks>
+        /// One reader for every document this store holds. The recovery policy — a file that is
+        /// missing, unreadable, or written by a schema this build does not know is equivalent to
+        /// having no file at all — has to be the same for all of them, and two copies of a
+        /// judgement like that drift.
+        /// </remarks>
+        private static T ReadFile<T>(string path, Func<T, bool> isFromNewerSchema, Action<T> repair)
+            where T : class, new()
         {
             try
             {
                 if (!File.Exists(path))
                 {
-                    return new ScopedSettings();
+                    return new T();
                 }
 
                 using var stream = File.OpenRead(path);
-                var serializer = new DataContractJsonSerializer(typeof(ScopedSettings));
-                var settings = serializer.ReadObject(stream) as ScopedSettings;
+                var serializer = new DataContractJsonSerializer(typeof(T));
+                var document = serializer.ReadObject(stream) as T;
 
-                if (settings is null || settings.SchemaVersion > ScopedSettings.CurrentSchemaVersion)
+                if (document is null || isFromNewerSchema(document))
                 {
                     // Written by a version that may mean something different by these fields.
                     // Falling back to the defaults is the conservative reading.
-                    return new ScopedSettings();
+                    return new T();
                 }
 
-                settings.Scopes ??= new System.Collections.Generic.List<ScopeOverrides>();
-                return settings;
+                repair(document);
+                return document;
             }
             catch (Exception e) when (RecoverableStorageFailure.Matches(e))
             {
                 // An unreadable settings file is equivalent to having none: the extension runs on
                 // its defaults rather than refusing to run.
-                return new ScopedSettings();
+                return new T();
             }
         }
 
-        private static void WriteFile(string path, ScopedSettings settings)
+        /// <summary>
+        /// Puts back what deserialisation leaves null. <c>DataContractJsonSerializer</c> does not
+        /// run property initialisers, so a member absent from the JSON comes back as null however
+        /// the class declares it.
+        /// </summary>
+        private static void Repair(ScopedSettings settings) =>
+            settings.Scopes ??= new List<ScopeOverrides>();
+
+        /// <inheritdoc cref="Repair(ScopedSettings)"/>
+        private static void Repair(UiPreferences preferences) =>
+            preferences.ThemeId ??= string.Empty;
+
+        private static void WriteFile<T>(string path, T document)
+            where T : class
         {
-            if (settings is null)
+            if (document is null)
             {
-                throw new ArgumentNullException(nameof(settings));
+                throw new ArgumentNullException(nameof(document));
             }
 
             try
@@ -106,8 +150,8 @@ namespace GitTabSync.Settings
 
                 using (var stream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
-                    var serializer = new DataContractJsonSerializer(typeof(ScopedSettings));
-                    serializer.WriteObject(stream, settings);
+                    var serializer = new DataContractJsonSerializer(typeof(T));
+                    serializer.WriteObject(stream, document);
                     stream.Flush();
                 }
 

@@ -181,6 +181,69 @@ namespace GitTabSync.Tests
                 StringComparison.OrdinalIgnoreCase);
         }
 
+
+        public sealed class Preferences
+        {
+            [Fact]
+            public void Round_trip()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                store.SavePreferences(new UiPreferences { ThemeId = "Midnight" });
+
+                Assert.Equal("Midnight", store.LoadPreferences().ThemeId);
+            }
+
+            [Fact]
+            public void Are_empty_when_nothing_has_been_stored()
+            {
+                using var temp = new TempDirectory();
+
+                Assert.Equal(string.Empty, new FileSettingsStore(temp.Path).LoadPreferences().ThemeId);
+            }
+
+            /// <summary>
+            /// They are the user's, not a repository's, so they sit beside the defaults rather than
+            /// under a repo key — and they must not be mistaken for either settings document.
+            /// </summary>
+            [Fact]
+            public void Live_in_their_own_file_beside_the_defaults()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                var path = store.GetPreferencesFilePath();
+
+                Assert.Equal(temp.Path, Path.GetDirectoryName(path));
+                Assert.NotEqual(store.GetDefaultsFilePath(), path);
+            }
+
+            [Fact]
+            public void A_file_from_a_newer_schema_is_ignored_rather_than_half_read()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                store.SavePreferences(new UiPreferences
+                {
+                    SchemaVersion = UiPreferences.CurrentSchemaVersion + 1,
+                    ThemeId = "Midnight",
+                });
+
+                Assert.Equal(string.Empty, store.LoadPreferences().ThemeId);
+            }
+
+            [Fact]
+            public void An_unreadable_file_is_the_same_as_no_file()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+                File.WriteAllText(store.GetPreferencesFilePath(), "{ not json");
+
+                Assert.Equal(string.Empty, store.LoadPreferences().ThemeId);
+            }
+        }
         public sealed class Json
         {
             [Fact]

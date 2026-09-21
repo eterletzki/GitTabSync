@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 189 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 211 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -66,18 +66,23 @@ VSIX and the modern test project.
 Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity), BranchMonitor
 Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
 Core/Settings/  SyncSetting + SyncSettingCatalog (names/defaults/labels), SettingScope(Kind),
-                SyncContext (the cascade), ScopedSettings (persisted),
-                ISettingsStore/FileSettingsStore, ISyncSettings, SettingsResolver,
-                ResolvedSetting, and the window's model: SettingsViewModel, SyncSettingRow,
-                SettingScopeChoice, SettingOverrideRow, SettingScopeLabel
+                SyncContext (the cascade), ScopedSettings (persisted), UiPreferences (not
+                scoped — the theme), ISettingsStore/FileSettingsStore, ISyncSettings,
+                SettingsResolver, ResolvedSetting, and the window's model: SettingsViewModel,
+                SyncSettingRow, SettingScopeChoice, SettingOverrideRow, SettingScopeLabel
 Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal),
                 RecoverableStorageFailure (internal, shared swallow policy)
 Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
                 CaptureScheduler (when the editor is read), TabSyncOptions, ITabSyncLog
+Core/Theming/   ThemeLibrary (discovery, seeding, the choice), ThemeInfo, BuiltInTheme (the
+                VSIX supplies the markup), ThemeFile (internal, reads the name out of the XML),
+                ThemeSelectionViewModel
 Vsix/           GitTabSyncPackage (autoload, solution events, the menu command),
                 RepositorySyncSession (RDT subscription, one per open repo; owns the resolver),
                 VsEditorTabs (the only file touching editor windows), GitTabSyncToolWindow +
                 SettingsWindowControl.xaml(.cs), GitTabSyncPackage.vsct, OutputWindowLog
+Vsix/Theming/   ThemeHost (parses a theme, dresses a control), and the shipped themes:
+                VisualStudio.xaml (default, holds the key contract), Compact.xaml, Plain.xaml
 ```
 
 The seam is `IEditorTabs`: Core never sees a VS type, the VSIX never makes a sync decision. New
@@ -234,11 +239,60 @@ once the window can edit the `Global` scope, a property grid that silently ignor
 and weaker way to set the same things. Nothing shipped to a Marketplace, so there were no stored
 preferences to migrate.
 
+### Theming
+
+The window's appearance is a file, not code. `SettingsWindowControl.xaml` contains no colour, font
+or margin: every one is a `DynamicResource` lookup against a `ResourceDictionary` that `ThemeHost`
+parses out of `%LOCALAPPDATA%\GitTabSync\themes` at run time. The key contract is written out at the
+top of [VisualStudio.xaml](src/GitTabSync.Vsix/Theming/VisualStudio.xaml), which is the file to
+update when a key is added.
+
+The split follows the `IEditorTabs` rule. Core owns everything testable — which files exist, what
+they are called, which one is chosen, what is written out when one is missing — and the VSIX owns
+the one thing only it can do, parsing markup. `BuiltInTheme` is the seam: Core writes theme *text*
+it never interprets, and the VSIX supplies that text from an embedded resource.
+
+Five things here are load-bearing.
+
+- **`DynamicResource`, never `StaticResource`, in the control.** Static would bind to whichever
+  theme was loaded when the window was built, so switching would do nothing until the window was
+  reopened — and it would *throw* on a key a user's theme omits instead of falling back. Dynamic
+  makes a partial theme a valid theme. This is the whole reason theme switching needs no rebuild of
+  the window.
+- **Themes are always loaded from disk, including the built-in ones.** They are compiled into the
+  assembly only so `UseWPF` type-checks them at build time and so there is text to write out; the
+  loading path is the same one a user's theme takes. A built-in that loaded from a pack URI would
+  be the path that is exercised on every run, and users' themes would be the path that is not.
+- **A file that is already there is never overwritten**, so an edit to a shipped theme survives an
+  upgrade. The cost is that an improvement to a shipped theme does not reach somebody who edited it;
+  deleting the file is how they ask for the new one, and the README written into the folder says so.
+- **The fallback chain is chosen → default → `Plain` → nothing.** `Plain.xaml` references no Visual
+  Studio types at all, so it is the one most likely to load when another did not; "nothing" is an
+  empty dictionary, which renders unstyled rather than failing. A broken theme must never be able to
+  stop the window opening — it is a file the user is invited to edit.
+- **`ThemeHost` passes a `ParserContext` with `BaseUri`.** That is what lets one theme merge another
+  by file name — `Compact.xaml` is `VisualStudio.xaml` plus a few overrides, and a user's theme can
+  do the same. Without it a relative `Source` in a theme has nothing to resolve against.
+
+The theme is deliberately **not** in the settings cascade. Everything in that cascade is a
+three-state boolean answering "what should happen on this branch"; appearance is neither boolean nor
+per-branch, and a window that changed colour on checkout would be a bug, not a feature. It lives in
+`UiPreferences` in `ui.json` beside the defaults, and `ThemeLibrary` is one per process rather than
+one per session, because the question is answerable with no solution open — which is also why the
+Appearance section sits outside `Body` in the XAML and stays visible on the "no repository"
+placeholder.
+
+Selection stores an id, not a path, and an id naming no file resolves to the default **without being
+cleared**: a theme file can be missing for a moment because it is being edited, and treating that as
+"they changed their mind" would silently discard a choice nobody withdrew.
+
 ### Decisions worth knowing before changing them
 
 - **Storage lives in `%LOCALAPPDATA%\GitTabSync`**, never in the working tree — anything inside it
   would be rewritten by the very checkout the session exists to survive, and would show as a pending
-  change on every switch. Layout: `repos\<repo-key>\<head-key>.json`.
+  change on every switch. Layout: `repos\<repo-key>\<head-key>.json`, plus `settings.json` (the
+  defaults), `ui.json` (the theme) and `themes\` at the root. The same rule covers themes: a theme
+  file in the working tree would let a checkout change how the IDE looks.
 - **Session keys are `readable prefix + hash`** ([StorageKey](src/GitTabSync.Core/Storage/StorageKey.cs)).
   Branch names contain characters illegal in filenames, and sanitising alone maps `feature/foo` and
   `feature-foo` onto one file. Repo keys are case-*insensitive* (Windows paths); head keys are
@@ -339,13 +393,18 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - No coverage of the Visual Studio layer at all. `VsEditorTabs`, `RepositorySyncSession` and
   `GitTabSyncPackage` compile and package but **have never been run inside Visual Studio**. Treat
   their behaviour as unverified. This is the next thing that matters.
-- **The settings window has never been opened.** It compiles, the `.vsct` compiles, and the pkgdef
-  registers both `Menus.ctmenu` and the tool window GUID — but "it builds" is the entire evidence.
-  Everything below is unverified: whether the command appears under View > Other Windows, whether
-  the pane hosts the WPF control, whether `VsBrushes` resolve in both themes, whether the combo box
-  and the three-state check boxes bind, and whether `GitTabSyncPackage.Instance` is populated when a
-  docked window is restored at startup. Open it in `devenv /rootsuffix Exp` before believing any of
-  it.
+- **The settings window has never been opened in Visual Studio.** It compiles, the `.vsct` compiles,
+  and the pkgdef registers both `Menus.ctmenu` and the tool window GUID. What is *not* only "it
+  builds": the control's markup and all three themes have been loaded into a real WPF runtime
+  outside VS, with the VS resource keys stubbed, and rendered with stand-in view models — so the
+  layout, the bindings, the shared-size columns, the three-state check boxes, the collapsing note
+  text and the merge in `Compact.xaml` are known to work. That harness is not in the repo; it lived
+  in a scratch directory, and it stubbed exactly the things only VS can supply.
+  Still unverified, and only `devenv /rootsuffix Exp` can settle it: whether the command appears
+  under View > Other Windows, whether the pane hosts the control, whether the real `VsBrushes` and
+  `VsResourceKeys` styles resolve in both IDE themes (the stub proves the *markup* resolves them,
+  not that the shell provides them to a tool window), and whether `GitTabSyncPackage.Instance` is
+  populated when a docked window is restored at startup.
 - **Nothing supplies a project scope.** The window offers Defaults, repository, branch and — when a
   solution is open — solution. `SettingScopeKind.Project` resolves, persists and is tested, but
   `RepositorySyncSession.CurrentContext` passes no project path, so the level is unreachable from
@@ -398,4 +457,10 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
   worth knowing.
 - Nothing ever prunes `%LOCALAPPDATA%\GitTabSync`; deleted branches leave their session files — and
   now their branch-scoped overrides — behind.
+- **Themes are re-read only on demand.** `ThemeLibrary.Reload` is wired to the window's **Reload
+  themes** button and nothing else, so a theme edited in place is picked up when asked for rather
+  than on save. Watching the folder is the obvious next step and was left out deliberately: a file
+  being written is a normal state while somebody is editing one, and re-dressing the window on
+  every keystroke in their editor would make authoring a theme harder. If it is added, it wants
+  `BranchMonitor`'s shape — a watcher plus a debounce — not a bare `FileSystemWatcher`.
 - Bookmarks and breakpoints, per the README's staging.

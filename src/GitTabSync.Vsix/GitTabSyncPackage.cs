@@ -55,6 +55,11 @@ namespace GitTabSync
 
             _log = await OutputWindowLog.CreateAsync(this);
 
+            // The theme host may already have loaded a theme for a window restored during startup,
+            // so this connects its log rather than supplying one: from here on, a broken theme file
+            // is reported in the pane like everything else.
+            ThemeHost.Instance.Log = _log;
+
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
             _solution = await GetServiceAsync(typeof(SVsSolution)) as IVsSolution;

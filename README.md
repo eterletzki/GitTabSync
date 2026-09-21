@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 190 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 211 passing tests, including tests that drive the real `git` executable. |
 | Scoped settings (defaults → repository → branch → solution) | Implemented and tested in the core, including the window's view model. |
 | Visual Studio integration, including the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
@@ -70,6 +70,7 @@ Closing tabs on an unvisited branch is off by default because *every* branch is 
 time you use the extension — defaulting it on would wipe your tabs the first time you tried it. The
 cost of leaving it off is some tab bleed between branches, which the next save corrects.
 
+
 ### Scopes
 
 A branch is the unit settings reach over. Every setting can be set at five levels, each narrowing
@@ -98,6 +99,30 @@ exactly the ones that get forgotten and later look like a bug.
 
 Settings are per-user, not per-team: they are stored outside the working tree (see below) and are
 never committed.
+
+### Appearance
+
+The window's own styling is a theme: a WPF `ResourceDictionary` read at run time from
+`%LOCALAPPDATA%\GitTabSync\themes`. Three ship with the extension and are written into that folder
+the first time it runs:
+
+| Theme | |
+|---|---|
+| **Visual Studio** | The default. Takes every colour, font and control style from the IDE, so it follows whichever theme Visual Studio is in. |
+| **Compact** | The same, tightened for a narrow docked window. Built by merging `VisualStudio.xaml` and overriding a handful of keys. |
+| **Plain** | No Visual Studio types at all — plain WPF and the system colours. The easiest file to copy, and the one the window falls back to if another theme fails to load. |
+
+**To add your own, copy one of those files, rename the copy and edit it.** It appears in the picker
+after **Reload themes**; the file name is the theme's identity and the `GtsThemeName` entry inside
+it is the label. A key you leave out is simply not applied, so a partial theme is a valid theme, and
+a file that does not parse is reported in the **Git Tab Sync** output pane and skipped rather than
+breaking the window. The full list of keys is written out at the top of `VisualStudio.xaml`.
+
+Editing one of the shipped files is fine: they are only rewritten when they are *missing*, so an
+edit survives, and deleting one gets the original back.
+
+Unlike everything above, the theme is not scoped — it is one choice for all repositories, stored in
+`ui.json` beside the defaults.
 
 ## How it works
 
@@ -179,6 +204,12 @@ would show as a pending change on every branch switch.
 ```
 %LOCALAPPDATA%\GitTabSync\
 ├── settings.json                           the Defaults level, shared by every repository
+├── ui.json                                 the chosen theme
+├── themes\                                 one .xaml file per theme, yours included
+│   ├── VisualStudio.xaml
+│   ├── Compact.xaml
+│   ├── Plain.xaml
+│   └── README.txt
 └── repos\
     └── gittabsync-3f9a1c7d5e2b40a8\        one directory per repository
         ├── settings.json                   repository, branch and solution overrides
@@ -247,7 +278,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 190 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 211 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -266,9 +297,12 @@ Notable types:
 | [FileSessionStore.cs](src/GitTabSync.Core/Storage/FileSessionStore.cs) | JSON sessions under `%LOCALAPPDATA%`. |
 | [SettingsResolver.cs](src/GitTabSync.Core/Settings/SettingsResolver.cs) | Walks the scope cascade; reports the value *and* which level decided. |
 | [SettingsViewModel.cs](src/GitTabSync.Core/Settings/SettingsViewModel.cs) | Everything the settings window shows — in the core, so it is tested. |
+| [ThemeLibrary.cs](src/GitTabSync.Core/Theming/ThemeLibrary.cs) | Finds themes in the themes folder, writes the built-in ones out, remembers the choice. |
 | [VsEditorTabs.cs](src/GitTabSync.Vsix/VsEditorTabs.cs) | The only file that touches editor windows. |
 | [RepositorySyncSession.cs](src/GitTabSync.Vsix/RepositorySyncSession.cs) | Everything alive while one repository is open. |
-| [SettingsWindowControl.xaml](src/GitTabSync.Vsix/SettingsWindowControl.xaml) | The window itself: bindings and theme brushes, no decisions. |
+| [SettingsWindowControl.xaml](src/GitTabSync.Vsix/SettingsWindowControl.xaml) | The window itself: bindings and themed styles. No decisions, and no colours. |
+| [ThemeHost.cs](src/GitTabSync.Vsix/Theming/ThemeHost.cs) | Parses a theme file and dresses the window in it — the only part of theming that needs WPF. |
+| [VisualStudio.xaml](src/GitTabSync.Vsix/Theming/VisualStudio.xaml) | The default theme, and where the key contract a theme may define is written out. |
 
 Serialisation uses `DataContractJsonSerializer`, chosen over Newtonsoft and System.Text.Json so the
 VSIX ships no extra assemblies and cannot hit binding-redirect conflicts with the copies Visual
@@ -319,6 +353,9 @@ did not load — check **Extensions → Manage Extensions**.
   that is the whole of the evidence.
 - **Project-level settings cannot be set yet.** The level resolves and persists, but no document is
   attributed to its owning project, so the window has no project to offer.
+- **Themes are not watched.** A theme file edited while the window is open is picked up by **Reload
+  themes**, not on save — a file being written is a normal state while somebody is editing one, and
+  re-dressing the window on every keystroke would make writing a theme harder, not easier.
 - **Tab order is approximate.** `IVsUIShell.GetDocumentWindowEnum` does not promise tab order, and
   restore reopens documents rather than rebuilding the layout. Split panes and tab groups are not
   captured.

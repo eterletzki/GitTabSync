@@ -11,9 +11,11 @@ namespace GitTabSync.Tests.TestSupport
 
         private ScopedSettings _defaults = new ScopedSettings();
 
+        private UiPreferences _preferences = new UiPreferences();
+
         public int SaveCount { get; private set; }
 
-        /// <summary>When set, both save methods throw it.</summary>
+        /// <summary>When set, every save method throws it.</summary>
         public Exception? FailOnSave { get; set; }
 
         public ScopedSettings LoadDefaults() => _defaults;
@@ -41,6 +43,20 @@ namespace GitTabSync.Tests.TestSupport
 
             SaveCount++;
             _repositories[repositoryWorkingDirectory] = settings;
+        }
+
+        public UiPreferences LoadPreferences() =>
+            new UiPreferences { SchemaVersion = _preferences.SchemaVersion, ThemeId = _preferences.ThemeId };
+
+        public void SavePreferences(UiPreferences preferences)
+        {
+            if (FailOnSave is not null)
+            {
+                throw FailOnSave;
+            }
+
+            SaveCount++;
+            _preferences = preferences;
         }
 
         /// <summary>Puts a document in place without going through a resolver, for load tests.</summary>
