@@ -111,6 +111,57 @@ namespace GitTabSync.Settings
             setting != SyncSetting.SyncBookmarks && setting != SyncSetting.SyncBreakpoints;
 
         /// <summary>
+        /// The narrowest scope this setting may be set at. Anything narrower neither stores nor
+        /// resolves: <see cref="SettingsResolver"/> skips those scopes, and the window offers no
+        /// toggle there.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Most settings reach all the way down, which is what the cascade is for. The exception is
+        /// <see cref="SyncSetting.CloseTabsWhenBranchHasNoSession"/>, which stops at
+        /// <see cref="SettingScopeKind.Repository"/> because a value for it at a *narrower* scope
+        /// could never be used. It only has an effect on arrival at a branch with nothing stored,
+        /// and the only branch the window can set anything for is the one you are on — which, by
+        /// the time you could set it, has a session. A branch, solution or project override of it
+        /// is therefore a toggle that can be stored and can never fire, which is the same trap
+        /// <see cref="IsImplemented"/> exists to keep out of the window.
+        /// </para>
+        /// <para>
+        /// This is a rule about *where*, not about *whether*: broader scopes are unaffected, and an
+        /// override already stored at a scope that is now out of reach stays listed so it can be
+        /// cleared. It is skipped when resolving rather than deleted, because deleting a user's
+        /// stored value to make a rule true is not a trade this project makes.
+        /// </para>
+        /// </remarks>
+        public static SettingScopeKind NarrowestScopeFor(SyncSetting setting) =>
+            setting == SyncSetting.CloseTabsWhenBranchHasNoSession
+                ? SettingScopeKind.Repository
+                : SettingScopeKind.Project;
+
+        /// <summary>
+        /// Whether this setting may be set at this scope kind. Relies on
+        /// <see cref="SettingScopeKind"/> being ordered broadest to narrowest.
+        /// </summary>
+        public static bool IsSettableAt(SyncSetting setting, SettingScopeKind kind) =>
+            (int)kind <= (int)NarrowestScopeFor(setting);
+
+        /// <summary>
+        /// Why a setting cannot be set at <paramref name="kind"/>, or <c>null</c> when it can.
+        /// </summary>
+        public static string? ScopeLimitReasonFor(SyncSetting setting, SettingScopeKind kind)
+        {
+            if (IsSettableAt(setting, kind))
+            {
+                return null;
+            }
+
+            return NarrowestScopeFor(setting) == SettingScopeKind.Repository
+                ? "Set for the whole repository, or in Defaults — on one branch it could only "
+                    + "apply the first time you arrived there."
+                : "Not available at this level.";
+        }
+
+        /// <summary>
         /// The value used when nothing has been set at any scope.
         /// </summary>
         /// <remarks>

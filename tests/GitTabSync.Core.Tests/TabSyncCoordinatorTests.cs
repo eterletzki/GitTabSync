@@ -533,26 +533,44 @@ namespace GitTabSync.Tests
             Assert.Equal(new[] { b }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
         }
 
+        /// <summary>
+        /// This one is set for the repository or in the defaults and nowhere narrower, so it
+        /// applies to every unvisited branch rather than to one chosen in advance — which could
+        /// never have worked, because a branch-scoped value could only apply the first time you
+        /// arrived there, and that is before you could have set it.
+        /// </summary>
         [Fact]
-        public void Closing_tabs_on_an_unvisited_branch_can_be_turned_on_for_one_branch_only()
+        public void Closing_tabs_on_an_unvisited_branch_is_set_for_the_whole_repository()
         {
             var a = File_("src/A.cs");
             _editor.SetOpen(a);
 
             var settings = Scoped();
-            settings.Set(
-                SettingScope.Branch("branch/scratch"),
-                SyncSetting.CloseTabsWhenBranchHasNoSession,
-                true);
+            settings.Set(SettingScope.Repository, SyncSetting.CloseTabsWhenBranchHasNoSession, true);
 
             var coordinator = Start(settings);
             coordinator.CaptureSnapshot();
 
             SwitchTo("other");
-            Assert.Equal(new[] { a }, _editor.Open.Select(t => t.AbsolutePath).ToArray());
+            Assert.Empty(_editor.Open);
+
+            // And again on the next unvisited branch, from a fresh set of tabs.
+            _editor.SetOpen(a);
+            coordinator.CaptureSnapshot();
 
             SwitchTo("scratch");
             Assert.Empty(_editor.Open);
+        }
+
+        [Fact]
+        public void Closing_tabs_on_an_unvisited_branch_cannot_be_turned_on_for_one_branch()
+        {
+            var settings = Scoped();
+
+            Assert.Throws<ArgumentException>(() => settings.Set(
+                SettingScope.Branch("branch/scratch"),
+                SyncSetting.CloseTabsWhenBranchHasNoSession,
+                true));
         }
 
         [Fact]

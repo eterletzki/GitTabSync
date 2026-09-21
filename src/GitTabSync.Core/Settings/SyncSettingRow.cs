@@ -40,9 +40,29 @@ namespace GitTabSync.Settings
 
         public bool IsImplemented => SyncSettingCatalog.IsImplemented(Setting);
 
-        /// <summary>Why the row is disabled, or <c>null</c> when it is not.</summary>
+        /// <summary>
+        /// Whether this setting reaches the selected scope. False on a row that is perfectly real
+        /// but is set somewhere broader — see
+        /// <see cref="SyncSettingCatalog.NarrowestScopeFor"/>.
+        /// </summary>
+        public bool IsSettableHere => SyncSettingCatalog.IsSettableAt(Setting, Scope.Kind);
+
+        /// <summary>
+        /// Whether the toggle accepts input. The row itself stays enabled either way: it still
+        /// reports what applies here, and greying the whole row would grey the sentence saying why
+        /// the toggle is not available along with it.
+        /// </summary>
+        public bool IsEditable => IsImplemented && IsSettableHere;
+
+        /// <summary>Why the toggle is disabled, or <c>null</c> when it is not.</summary>
+        /// <remarks>
+        /// "Not implemented" wins over "not available here", because a setting that does nothing
+        /// anywhere is the more useful thing to say first.
+        /// </remarks>
         public string? UnavailableReason =>
-            IsImplemented ? null : "Not implemented yet — this setting is stored but does nothing.";
+            !IsImplemented
+                ? "Not implemented yet — this setting is stored but does nothing."
+                : SyncSettingCatalog.ScopeLimitReasonFor(Setting, Scope.Kind);
 
         /// <summary>
         /// On, off, or inherit. <c>null</c> is inherit, which binds straight onto a three-state

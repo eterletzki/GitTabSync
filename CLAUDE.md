@@ -55,7 +55,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 211 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 224 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -173,7 +173,22 @@ that project **on that branch**.
 | 4th | `Repository` | (one settings file per repo, so no key) |
 | 5th | `Global` | the defaults |
 
-Three things here are load-bearing.
+Four things here are load-bearing.
+
+**A setting declares how far down it reaches.** `SyncSettingCatalog.NarrowestScopeFor` is the rule;
+everything else asks `IsSettableAt`. `CloseTabsWhenBranchHasNoSession` stops at `Repository`, because
+a value for it at a narrower scope could be stored and could never fire: it only acts on arrival at a
+branch with *nothing stored*, and the only branch the window can set anything for is the one you are
+on, which by then has a session. That is the same trap `IsImplemented` exists to keep out of the
+window, so it gets the same treatment — the row stays, the toggle does not.
+
+The rule is enforced in three places and each one matters. `Resolve` **skips** out-of-reach scopes
+rather than obeying them, because a settings file can be hand-edited and the window must not say one
+thing while the coordinator does another. `Set` throws for a *value* at such a scope but always
+allows `null`: clearing has to keep working, or an override stored before the rule existed could
+never be removed. And `SettingOverrideRow.IsActive` marks a stranded override in the list instead of
+hiding it — stored but silently ignored, with nothing saying so, is the worst of the three states.
+Deleting stored values to make the rule true is deliberately *not* done.
 
 **Absence is the third state.** A stored override is present or it is not; there is no `false`
 meaning "unset". "Off here" and "not set here" have to stay distinguishable or the cascade collapses
@@ -417,9 +432,11 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 - **Making the project scope reachable** means `EditorTab.ProjectPath`, a `TabEntry` member at
   `Order = 5` (the `pinned` member is the precedent for appending without a schema bump), an
   `IVsHierarchy` lookup in `VsEditorTabs`, and a rule for documents owned by no project and for
-  linked/shared files owned by several. It also makes a stored session a *partial* record, so
-  `CloseTabsWhenBranchHasNoSession` must then leave excluded projects' tabs alone — that needs its
-  own test before the feature is believable. Both ends have to change together:
+  linked/shared files owned by several. It also makes a stored session a *partial* record: a
+  project-scoped `SyncTabs = off` means the session no longer describes every open tab, so the
+  closing decided by `CloseTabsWhenBranchHasNoSession` — which is resolved at the repository level,
+  not per project — must then leave excluded projects' tabs alone. That needs its own test before
+  the feature is believable. Both ends have to change together:
   `TabSyncCoordinator.ContextFor` and `RepositorySyncSession.CurrentContext` must name the same
   project, or the window will set a scope the coordinator never reads. That trap was live for the
   solution scope during this work and is what

@@ -67,6 +67,16 @@ namespace GitTabSync.Settings
             {
                 foreach (var scope in context.ScopeChain)
                 {
+                    // A setting that does not reach this far down is skipped rather than obeyed.
+                    // The window will not write one here, but a settings file is a file: it can be
+                    // hand-edited, and it can have been written by a build whose rules differed.
+                    // Skipping keeps the stored value visible and clearable instead of silently
+                    // acting on a level the UI says nothing about.
+                    if (!SyncSettingCatalog.IsSettableAt(setting, scope.Kind))
+                    {
+                        continue;
+                    }
+
                     if (_overrides.TryGetValue(scope, out var values)
                         && values.TryGetValue(setting, out var value))
                     {
@@ -109,6 +119,18 @@ namespace GitTabSync.Settings
             if (scope is null)
             {
                 throw new ArgumentNullException(nameof(scope));
+            }
+
+            // Clearing is always allowed, whatever the rule says now. An override stored at a scope
+            // this setting no longer reaches is exactly the one a user most needs to be able to
+            // remove, and refusing here would strand it.
+            if (value is not null && !SyncSettingCatalog.IsSettableAt(setting, scope.Kind))
+            {
+                throw new ArgumentException(
+                    SyncSettingCatalog.DisplayNameOf(setting) + " cannot be set at " + scope.Kind
+                        + "; the narrowest scope it reaches is "
+                        + SyncSettingCatalog.NarrowestScopeFor(setting) + ".",
+                    nameof(scope));
             }
 
             ScopedSettings document;

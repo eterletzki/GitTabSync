@@ -35,7 +35,7 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 211 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 224 passing tests, including tests that drive the real `git` executable. |
 | Scoped settings (defaults → repository → branch → solution) | Implemented and tested in the core, including the window's view model. |
 | Visual Studio integration, including the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
@@ -58,23 +58,29 @@ a git repository.
 
 **View → Other Windows → Git Tab Sync**
 
-| Setting | Default | Effect |
-|---|---|---|
-| Tabs | On | Remember which documents are open and restore them. Off means this branch is left alone entirely. |
-| Bookmarks | Off | *Not implemented yet — the setting is stored but does nothing.* |
-| Breakpoints | Off | *Not implemented yet — as above.* |
-| Close tabs on an unvisited branch | Off | Arriving on a branch with nothing remembered closes the open tabs instead of leaving them. |
-| Restore when a solution opens | On | Restore as soon as a solution is opened, rather than waiting for a branch switch. |
+| Setting | Default | Set at | Effect |
+|---|---|---|---|
+| Tabs | On | any level | Remember which documents are open and restore them. Off means this branch is left alone entirely. |
+| Bookmarks | Off | any level | *Not implemented yet — the setting is stored but does nothing.* |
+| Breakpoints | Off | any level | *Not implemented yet — as above.* |
+| Close tabs on an unvisited branch | Off | **repository or Defaults** | Arriving on a branch with nothing remembered closes the open tabs instead of leaving them. |
+| Restore when a solution opens | On | any level | Restore as soon as a solution is opened, rather than waiting for a branch switch. |
 
 Closing tabs on an unvisited branch is off by default because *every* branch is unvisited the first
 time you use the extension — defaulting it on would wipe your tabs the first time you tried it. The
 cost of leaving it off is some tab bleed between branches, which the next save corrects.
 
+It is also the one setting that is **not** set per branch. It only ever has an effect when you
+arrive on a branch with nothing stored, and the only branch the window can configure is the one you
+are on — which by then has a session. A per-branch value for it could be stored and could never
+fire, so the window offers it on **This repository** and **Defaults** only, and says so at the other
+levels rather than showing a toggle that would do nothing.
+
 
 ### Scopes
 
-A branch is the unit settings reach over. Every setting can be set at five levels, each narrowing
-the one above it:
+A branch is the unit settings reach over. A setting can be set at five levels, each narrowing the
+one above it:
 
 | Level | Applies to |
 |---|---|
@@ -83,6 +89,11 @@ the one above it:
 | **Branch** | one branch — the default granularity |
 | Solution | one solution, on that branch |
 | Project | one project, on that branch — **not reachable yet**, see [Limitations](#limitations) |
+
+A setting may stop short of the narrowest levels — see the **Set at** column above. Where it does,
+the window still shows the row and what applies, with the toggle disabled and the reason beside it;
+an override stored at such a level (by hand, say) is ignored rather than obeyed, and stays in the
+overrides list marked *stored, but not used at this level* so you can clear it.
 
 Each setting at each level is on, off, or **inherit**. Inherit is a real third state rather than a
 default value: "off on this branch" and "nothing set on this branch" are different, and only the
@@ -278,7 +289,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 211 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 224 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core

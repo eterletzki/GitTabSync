@@ -62,16 +62,17 @@
     </Style>
 
     <!--
-        The greying of a setting that is stored but does nothing yet lives here rather than in the
-        window, so a theme can say "unavailable" its own way. The window leaves the row enabled and
-        only disables its check box, which keeps the explanation readable: a disabled panel greys
-        the reason along with the control, and an unreadable reason is worse than none.
+        The greying of a setting whose toggle is unavailable here — not implemented yet, or set at a
+        broader scope than the one selected — lives here rather than in the window, so a theme can
+        say "unavailable" its own way. The window leaves the row enabled and only disables its check
+        box, which keeps the explanation readable: a disabled panel greys the reason along with the
+        control, and an unreadable reason is worse than none.
     -->
     <Style x:Key="GtsSettingNameTextStyle" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}" />
         <Setter Property="TextWrapping" Value="Wrap" />
         <Style.Triggers>
-            <DataTrigger Binding="{Binding IsImplemented}" Value="False">
+            <DataTrigger Binding="{Binding IsEditable}" Value="False">
                 <Setter Property="Foreground" Value="{DynamicResource {x:Static vsshell:VsBrushes.GrayTextKey}}" />
             </DataTrigger>
         </Style.Triggers>

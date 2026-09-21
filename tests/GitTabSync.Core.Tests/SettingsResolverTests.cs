@@ -246,6 +246,141 @@ namespace GitTabSync.Tests
             Assert.Empty(_store.Load(Repo).Scopes);
         }
 
+        // ---- settings that do not reach every scope ----
+
+        /// <summary>
+        /// "Close tabs on an unvisited branch" only ever fires on arrival at a branch with nothing
+        /// stored, and the only branch the window can set anything for is the one you are on — so a
+        /// branch-scoped value for it could never be the one that applies.
+        /// </summary>
+        [Fact]
+        public void Close_tabs_on_an_unvisited_branch_reaches_no_further_than_the_repository()
+        {
+            Assert.True(SyncSettingCatalog.IsSettableAt(
+                SyncSetting.CloseTabsWhenBranchHasNoSession, SettingScopeKind.Global));
+            Assert.True(SyncSettingCatalog.IsSettableAt(
+                SyncSetting.CloseTabsWhenBranchHasNoSession, SettingScopeKind.Repository));
+
+            Assert.False(SyncSettingCatalog.IsSettableAt(
+                SyncSetting.CloseTabsWhenBranchHasNoSession, SettingScopeKind.Branch));
+            Assert.False(SyncSettingCatalog.IsSettableAt(
+                SyncSetting.CloseTabsWhenBranchHasNoSession, SettingScopeKind.Solution));
+            Assert.False(SyncSettingCatalog.IsSettableAt(
+                SyncSetting.CloseTabsWhenBranchHasNoSession, SettingScopeKind.Project));
+        }
+
+        [Fact]
+        public void Every_other_setting_still_reaches_all_the_way_down()
+        {
+            foreach (var setting in SyncSettingCatalog.All)
+            {
+                if (setting == SyncSetting.CloseTabsWhenBranchHasNoSession)
+                {
+                    continue;
+                }
+
+                Assert.True(SyncSettingCatalog.IsSettableAt(setting, SettingScopeKind.Project));
+            }
+        }
+
+        [Fact]
+        public void Setting_one_at_a_scope_it_does_not_reach_is_refused()
+        {
+            var resolver = Resolver();
+
+            Assert.Throws<ArgumentException>(() => resolver.Set(
+                SettingScope.Branch("branch/main"), SyncSetting.CloseTabsWhenBranchHasNoSession, true));
+
+            Assert.Throws<ArgumentException>(() => resolver.Set(
+                SettingScope.Solution("branch/main", RelativeSolution),
+                SyncSetting.CloseTabsWhenBranchHasNoSession,
+                false));
+
+            // The repository and the defaults are unaffected.
+            resolver.Set(SettingScope.Repository, SyncSetting.CloseTabsWhenBranchHasNoSession, true);
+            Assert.True(resolver.IsEnabled(SyncSetting.CloseTabsWhenBranchHasNoSession, On("branch/main")));
+        }
+
+        /// <summary>
+        /// Clearing has to work at every scope whatever the rule says now, or an override stored
+        /// before the rule existed — or hand-written — could never be removed.
+        /// </summary>
+        [Fact]
+        public void Clearing_one_is_allowed_at_any_scope()
+        {
+            var resolver = Resolver();
+
+            resolver.Set(SettingScope.Branch("branch/main"), SyncSetting.CloseTabsWhenBranchHasNoSession, null);
+
+            Assert.Null(resolver.GetOverride(
+                SettingScope.Branch("branch/main"), SyncSetting.CloseTabsWhenBranchHasNoSession));
+        }
+
+        /// <summary>
+        /// A settings file is a file: it can be hand-edited. A value stored where the setting does
+        /// not reach is skipped rather than obeyed, so what the window says and what the coordinator
+        /// does cannot come apart.
+        /// </summary>
+        [Fact]
+        public void A_stored_value_at_a_scope_it_does_not_reach_is_ignored()
+        {
+            _store.Seed(Repo, new ScopedSettings
+            {
+                Scopes =
+                {
+                    new ScopeOverrides
+                    {
+                        Kind = nameof(SettingScopeKind.Branch),
+                        HeadKey = "branch/main",
+                        Values =
+                        {
+                            new SettingOverride
+                            {
+                                Setting = SyncSettingCatalog.NameOf(SyncSetting.CloseTabsWhenBranchHasNoSession),
+                                On = true,
+                            },
+                        },
+                    },
+                },
+            });
+
+            var resolver = Resolver();
+            var resolved = resolver.Resolve(SyncSetting.CloseTabsWhenBranchHasNoSession, On("branch/main"));
+
+            Assert.False(resolved.Value);
+            Assert.False(resolved.IsExplicit);
+
+            // Still stored, and still listed, so it can be cleared.
+            Assert.True(resolver.GetOverride(
+                SettingScope.Branch("branch/main"), SyncSetting.CloseTabsWhenBranchHasNoSession));
+            Assert.Single(resolver.Overrides);
+        }
+
+        [Fact]
+        public void A_broader_value_still_decides_when_a_narrower_one_is_ignored()
+        {
+            var resolver = Resolver();
+            resolver.Set(SettingScope.Global, SyncSetting.CloseTabsWhenBranchHasNoSession, true);
+
+            var resolved = resolver.Resolve(SyncSetting.CloseTabsWhenBranchHasNoSession, On("branch/main"));
+
+            Assert.True(resolved.Value);
+            Assert.Equal(SettingScopeKind.Global, resolved.Origin.Kind);
+        }
+
+        [Fact]
+        public void The_repository_still_overrides_the_defaults()
+        {
+            var resolver = Resolver();
+            resolver.Set(SettingScope.Global, SyncSetting.CloseTabsWhenBranchHasNoSession, true);
+            resolver.Set(SettingScope.Repository, SyncSetting.CloseTabsWhenBranchHasNoSession, false);
+
+            var resolved = resolver.Resolve(SyncSetting.CloseTabsWhenBranchHasNoSession, On("branch/main"));
+
+            Assert.False(resolved.Value);
+            Assert.Equal(SettingScopeKind.Repository, resolved.Origin.Kind);
+        }
+
         // ---- persistence ----
 
         [Fact]

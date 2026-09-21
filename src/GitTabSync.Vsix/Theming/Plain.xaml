@@ -42,7 +42,7 @@
     <Style x:Key="GtsSettingNameTextStyle" TargetType="TextBlock">
         <Setter Property="TextWrapping" Value="Wrap" />
         <Style.Triggers>
-            <DataTrigger Binding="{Binding IsImplemented}" Value="False">
+            <DataTrigger Binding="{Binding IsEditable}" Value="False">
                 <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" />
             </DataTrigger>
         </Style.Triggers>

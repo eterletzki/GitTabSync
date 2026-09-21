@@ -72,7 +72,7 @@
                                               Style="{DynamicResource GtsCheckBoxStyle}"
                                               IsThreeState="True"
                                               IsChecked="{Binding Value, Mode=TwoWay}"
-                                              IsEnabled="{Binding IsImplemented}" />
+                                              IsEnabled="{Binding IsEditable}" />
 
                                     <StackPanel Grid.Column="1">
                                         <TextBlock Style="{DynamicResource GtsSettingNameTextStyle}"
@@ -118,6 +118,7 @@
                                         <Run Text="{Binding SettingText, Mode=OneWay}" />
                                         <Run Text=" " />
                                         <Run Text="{Binding ValueText, Mode=OneWay}" />
+                                        <Run Text="{Binding NoteText, Mode=OneWay}" />
                                     </TextBlock>
 
                                     <Button Grid.Column="1"
