@@ -7,6 +7,7 @@ including when the branch is switched **outside** Visual Studio.
 - [Status](#status)
 - [Installing](#installing)
 - [Settings](#settings)
+- [What's New](#whats-new)
 - [How it works](#how-it-works)
 - [What gets stored, and where](#what-gets-stored-and-where)
 - [Building from source](#building-from-source)
@@ -35,9 +36,11 @@ Tabs are the focus. Bookmarks and breakpoints are a possible later step, deliber
 
 | Part | State |
 |---|---|
-| Branch detection, storage, save/restore decisions | Implemented, 224 passing tests, including tests that drive the real `git` executable. |
+| Branch detection, storage, save/restore decisions | Implemented, 335 passing tests, including tests that drive the real `git` executable. |
 | Scoped settings (defaults → repository → branch → solution) | Implemented and tested in the core, including the window's view model. |
-| Visual Studio integration, including the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
+| What's New page (changelog parsing, when to show it) | Implemented and tested in the core, wording included. |
+| What's New page, shown in the IDE | **Runs.** Appears on a first install and the IDE starts normally with it due. The upgrade path is still untested. |
+| Visual Studio integration, everything else — tab syncing, the settings window | Compiles and packages into an installable `.vsix`, but **has never been run inside Visual Studio**. Treat it as unproven. |
 
 ## Installing
 
@@ -135,6 +138,30 @@ edit survives, and deleting one gets the original back.
 Unlike everything above, the theme is not scoped — it is one choice for all repositories, stored in
 `ui.json` beside the defaults.
 
+## What's New
+
+**View → Other Windows → Git Tab Sync: What's New**
+
+A page describing what changed, shown once after a first install or an upgrade and reopenable from
+the menu at any time. It is built from [CHANGELOG.md](CHANGELOG.md), which ships inside the
+extension, and shows the releases between the version whose notes you last saw and the one you are
+now running — newest first, and never a release you do not have.
+
+- **A first install gets an introduction**, not a list of changes: a changelog means nothing to
+  somebody who has not used the thing being changed yet.
+- **An upgrade with nothing in the changelog shows nothing.** A page listing no changes reads as
+  "this release did nothing", and the version is deliberately *not* recorded when that happens —
+  so the next release that does have notes covers the silent one too.
+- **Going back to an older build shows nothing**, and does not forget that you have already read
+  the newer release's notes.
+- **The page is not shown at all if the fact that it was shown cannot be saved.** This inverts the
+  rule everything else here follows: a storage failure elsewhere costs a remembered tab set, but
+  here it would mean this window opening on *every* startup for the life of the install. Between
+  annoying you once a day forever and never showing you a page you did not ask for, it stays quiet.
+
+Which version you have seen is kept in `state.json` beside the defaults. Deleting it is how you ask
+to see the page again.
+
 ## How it works
 
 ### Detecting the branch
@@ -216,6 +243,7 @@ would show as a pending change on every branch switch.
 %LOCALAPPDATA%\GitTabSync\
 ├── settings.json                           the Defaults level, shared by every repository
 ├── ui.json                                 the chosen theme
+├── state.json                              the version whose release notes have been shown
 ├── themes\                                 one .xaml file per theme, yours included
 │   ├── VisualStudio.xaml
 │   ├── Compact.xaml
@@ -289,7 +317,7 @@ launch that: `devenv /rootsuffix Exp`.
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Branch detection, storage, and every sync decision. No Visual Studio references. |
 | `src/GitTabSync.Vsix` | net472 | The extension: a thin adapter from the Visual Studio shell to the core. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 224 tests, including real-`git` integration tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 335 tests, including real-`git` integration tests. |
 
 The split follows one rule: **anything that can be tested without Visual Studio is kept out of the
 VSIX**, so the interesting decisions are covered by fast tests that need nothing installed. Core
@@ -309,9 +337,13 @@ Notable types:
 | [SettingsResolver.cs](src/GitTabSync.Core/Settings/SettingsResolver.cs) | Walks the scope cascade; reports the value *and* which level decided. |
 | [SettingsViewModel.cs](src/GitTabSync.Core/Settings/SettingsViewModel.cs) | Everything the settings window shows — in the core, so it is tested. |
 | [ThemeLibrary.cs](src/GitTabSync.Core/Theming/ThemeLibrary.cs) | Finds themes in the themes folder, writes the built-in ones out, remembers the choice. |
+| [ChangelogParser.cs](src/GitTabSync.Core/Release/ChangelogParser.cs) | Reads `CHANGELOG.md` into releases, groups and changes. Not a markdown parser. |
+| [LandingPageDecision.cs](src/GitTabSync.Core/Release/LandingPageDecision.cs) | Whether the What's New page opens and what goes on it — pure, and tested row by row. |
+| [LandingPageGate.cs](src/GitTabSync.Core/Release/LandingPageGate.cs) | The storage half: shows the page only if the record of showing it can be read back. |
 | [VsEditorTabs.cs](src/GitTabSync.Vsix/VsEditorTabs.cs) | The only file that touches editor windows. |
 | [RepositorySyncSession.cs](src/GitTabSync.Vsix/RepositorySyncSession.cs) | Everything alive while one repository is open. |
 | [SettingsWindowControl.xaml](src/GitTabSync.Vsix/SettingsWindowControl.xaml) | The window itself: bindings and themed styles. No decisions, and no colours. |
+| [WhatsNewWindowControl.xaml](src/GitTabSync.Vsix/WhatsNewWindowControl.xaml) | The What's New page. Dressed by the same themes, and defines no key of its own. |
 | [ThemeHost.cs](src/GitTabSync.Vsix/Theming/ThemeHost.cs) | Parses a theme file and dresses the window in it — the only part of theming that needs WPF. |
 | [VisualStudio.xaml](src/GitTabSync.Vsix/Theming/VisualStudio.xaml) | The default theme, and where the key contract a theme may define is written out. |
 
@@ -361,9 +393,16 @@ did not load — check **Extensions → Manage Extensions**.
 
 ## Limitations
 
-- **The Visual Studio layer has never been run in Visual Studio.** Everything in
-  `src/GitTabSync.Vsix` is unverified, the settings window included — it builds and registers, and
-  that is the whole of the evidence.
+- **Almost none of the Visual Studio layer has been run in Visual Studio.** The package now
+  demonstrably loads and initialises, since the What's New page reached the screen — but tab
+  capture and restore, the settings window, and everything that touches editor windows are still
+  unverified. They build and register, and that is the whole of the evidence.
+- **The What's New page has only been seen as a first install.** It appears, and the IDE starts
+  normally with it due — but the *upgrade* path, which shows a different page built from a
+  different set of releases, cannot be rehearsed without two installed builds and has never run.
+  Its first real exercise will be somebody's upgrade.
+- **The extension's log is not written to disk.** It goes to the **Git Tab Sync** output pane and
+  nowhere else, so a hang or a crash — the cases where you most want it — takes it with them.
 - **Project-level settings cannot be set yet.** The level resolves and persists, but no document is
   attributed to its owning project, so the window has no project to offer.
 - **Themes are not watched.** A theme file edited while the window is open is picked up by **Reload

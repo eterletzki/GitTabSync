@@ -31,6 +31,12 @@ namespace GitTabSync.Settings
         /// </summary>
         private const string PreferencesFileName = "ui.json";
 
+        /// <summary>
+        /// What the extension has already shown this install. Beside the defaults rather than
+        /// under a repository, because it is true of the install and not of any one clone.
+        /// </summary>
+        private const string InstallStateFileName = "state.json";
+
         private readonly string _rootDirectory;
 
         /// <param name="rootDirectory">
@@ -62,9 +68,20 @@ namespace GitTabSync.Settings
         public void SavePreferences(UiPreferences preferences) =>
             WriteFile(GetPreferencesFilePath(), preferences);
 
+        public InstallState LoadInstallState() =>
+            ReadFile<InstallState>(
+                GetInstallStateFilePath(),
+                document => document.SchemaVersion > InstallState.CurrentSchemaVersion,
+                Repair);
+
+        public void SaveInstallState(InstallState state) =>
+            WriteFile(GetInstallStateFilePath(), state);
+
         internal string GetDefaultsFilePath() => Path.Combine(_rootDirectory, SettingsFileName);
 
         internal string GetPreferencesFilePath() => Path.Combine(_rootDirectory, PreferencesFileName);
+
+        internal string GetInstallStateFilePath() => Path.Combine(_rootDirectory, InstallStateFileName);
 
         internal string GetRepositoryFilePath(string repositoryWorkingDirectory)
         {
@@ -127,6 +144,10 @@ namespace GitTabSync.Settings
         /// <inheritdoc cref="Repair(ScopedSettings)"/>
         private static void Repair(UiPreferences preferences) =>
             preferences.ThemeId ??= string.Empty;
+
+        /// <inheritdoc cref="Repair(ScopedSettings)"/>
+        private static void Repair(InstallState state) =>
+            state.LastSeenVersion ??= string.Empty;
 
         private static void WriteFile<T>(string path, T document)
             where T : class

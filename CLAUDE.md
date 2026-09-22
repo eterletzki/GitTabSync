@@ -34,7 +34,16 @@ dotnet build src\GitTabSync.Core\GitTabSync.Core.csproj
 # Full solution and the .vsix (MSBuild from either installed VS)
 & "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" GitTabSync.slnx /p:Configuration=Release /t:Rebuild /restore
 # -> src\GitTabSync.Vsix\bin\Release\net472\GitTabSync.Vsix.vsix
+
+# Proves the manifest-vs-assembly version check actually fires, rather than being dead markup
+& "C:\Program Files\...\MSBuild.exe" src\GitTabSync.Vsix\GitTabSync.Vsix.csproj /p:Version=9.9.9
+# -> error: Version mismatch: source.extension.vsixmanifest says 1.0.1, but ... is 9.9.9
 ```
+
+The release version lives in `Directory.Build.props` and must equal the `Version` in
+`source.extension.vsixmanifest`; `VerifyManifestVersion` fails the build when they differ, and
+`ShippedReleaseTests` fails when CHANGELOG.md has no entry for it. Releasing changes all three
+together — the two version fields and the `## Unreleased` heading.
 
 **The "Visual Studio extension development" workload is not installed on this machine and is not
 required.** `VSSDKBuildToolsAutoSetup=true` in
@@ -55,7 +64,7 @@ of the VSIX.**
 |---|---|---|
 | `src/GitTabSync.Core` | netstandard2.0 | Git detection, storage, and all sync decisions. No VS references. |
 | `src/GitTabSync.Vsix` | net472 | Thin shell adapter: VS APIs in, `IEditorTabs` out. |
-| `tests/GitTabSync.Core.Tests` | net9.0 | 224 tests, incl. real-`git` and real-timer timing tests. |
+| `tests/GitTabSync.Core.Tests` | net9.0 | 335 tests, incl. real-`git` and real-timer timing tests. |
 
 Core targets netstandard2.0 specifically so one assembly is consumable by both the .NET Framework
 VSIX and the modern test project.
@@ -67,9 +76,14 @@ Core/Git/       GitRepository (discovery + HEAD read), GitHead (parse/identity),
 Core/Model/     TabSession, TabEntry — the persisted shape, DataContract-annotated
 Core/Settings/  SyncSetting + SyncSettingCatalog (names/defaults/labels), SettingScope(Kind),
                 SyncContext (the cascade), ScopedSettings (persisted), UiPreferences (not
-                scoped — the theme), ISettingsStore/FileSettingsStore, ISyncSettings,
+                scoped — the theme), InstallState (not scoped — what has been shown),
+                ISettingsStore/FileSettingsStore, ISyncSettings,
                 SettingsResolver, ResolvedSetting, and the window's model: SettingsViewModel,
                 SyncSettingRow, SettingScopeChoice, SettingOverrideRow, SettingScopeLabel
+Core/Release/   ReleaseNotes/ReleaseEntry/ReleaseChangeGroup (the parsed changelog),
+                ChangelogParser, ReleaseVersion (internal, the one lenient parse),
+                ShippedRelease (the embedded CHANGELOG.md + this build's version),
+                LandingPageDecision (pure), LandingPageGate (storage), LandingPageViewModel
 Core/Storage/   ISessionStore, FileSessionStore, StorageKey (internal),
                 RecoverableStorageFailure (internal, shared swallow policy)
 Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTabs, EditorTab,
@@ -77,10 +91,11 @@ Core/Sync/      TabSyncCoordinator (the decisions), TabSessionMapper, IEditorTab
 Core/Theming/   ThemeLibrary (discovery, seeding, the choice), ThemeInfo, BuiltInTheme (the
                 VSIX supplies the markup), ThemeFile (internal, reads the name out of the XML),
                 ThemeSelectionViewModel
-Vsix/           GitTabSyncPackage (autoload, solution events, the menu command),
+Vsix/           GitTabSyncPackage (autoload, solution events, the menu commands),
                 RepositorySyncSession (RDT subscription, one per open repo; owns the resolver),
                 VsEditorTabs (the only file touching editor windows), GitTabSyncToolWindow +
-                SettingsWindowControl.xaml(.cs), GitTabSyncPackage.vsct, OutputWindowLog
+                SettingsWindowControl.xaml(.cs), WhatsNewToolWindow +
+                WhatsNewWindowControl.xaml(.cs), GitTabSyncPackage.vsct, OutputWindowLog
 Vsix/Theming/   ThemeHost (parses a theme, dresses a control), and the shipped themes:
                 VisualStudio.xaml (default, holds the key contract), Compact.xaml, Plain.xaml
 ```
@@ -316,13 +331,76 @@ Selection stores an id, not a path, and an id naming no file resolves to the def
 cleared**: a theme file can be missing for a moment because it is being edited, and treating that as
 "they changed their mind" would silently discard a choice nobody withdrew.
 
+### The What's New page
+
+Same seam as everything else: Core decides, the VSIX shows. `ChangelogParser` turns CHANGELOG.md
+into `ReleaseNotes`, `LandingPageDecision` is the pure "show what, if anything", `LandingPageGate`
+is the storage half, and `LandingPageViewModel` holds every word on the page so the wording is
+under test. The VSIX contributes a `ToolWindowPane`, a XAML file and a call at the end of
+`InitializeAsync`.
+
+Five things are load-bearing.
+
+**The page is not shown unless the record of having shown it can be read back.** This inverts the
+storage rule the rest of the extension follows, and the inversion is the point. Everywhere else a
+swallowed write costs a convenience — a remembered tab set, a theme choice — and silence is
+plainly right. Here the condition that opened the window is still true next startup, so a lost
+write costs the user this page *every day for the life of the install*. `FileSettingsStore`
+swallows IO failures and returns `void`, so **a store that accepts a save and keeps nothing looks
+exactly like success**; only loading the value back tells them apart. Hence `Record` writes, then
+re-reads, and returns whether the version is actually recorded.
+`The_page_is_not_shown_when_the_record_of_showing_it_cannot_be_read_back` drives that with a fake
+that drops saves *silently* — a fake that throws would pass against a version of `Record` that only
+catches, which is the bug this is guarding.
+
+**Record nothing when there is nothing to show.** `OnStartup` returns before `Record` when the
+decision is `None`, so an upgrade the changelog is silent about leaves the stored version alone and
+the next release that *does* have notes covers the silent one too. `A_silent_upgrade_is_covered_by_
+the_next_release_that_has_notes` is the test. Recording on a downgrade would be the same mistake
+from the other side: somebody who went back to 1.1.0 after trying 1.3.0 has still read 1.3.0.
+
+**The page defines no new theme key.** It is dressed by the same themes as the settings window, and
+a theme file that already exists is *never overwritten* — so a key added for this page would be
+missing from every theme anybody has edited, and the first page they would see it missing from is
+this one, immediately after an upgrade. Everything in `WhatsNewWindowControl.xaml` comes from the
+contract at the top of `VisualStudio.xaml`. Body text is an unstyled `TextBlock` on purpose: there
+is no body-text key, and it inherits colour and font from `GtsSurfaceStyle`'s `TextElement` setters.
+
+**`## Unreleased` is skipped with its contents**, because every item under it is a promise the
+installed build cannot keep. Note what that rules out: a parser that merely ignored the heading
+would attach its bullets to the *next* release, which is worse than showing them.
+`An_unreleased_section_is_skipped_with_its_contents` pins that specific failure.
+
+**One version parse, shared.** Versions arrive from three places written by three different hands —
+`AssemblyInformationalVersion`, a changelog heading, and the state file. `ReleaseVersion` normalises
+all of them, because `System.Version` leaves unspecified components at `-1`: without it `"1.1"`
+sorts *below* `"1.1.0"` and upgrading between two spellings of one release re-announces it. It
+also strips a `-prerelease`/`+metadata` suffix, which is not hypothetical — this build's
+informational version really is `1.0.1+<sha>`.
+
+The version itself is checked from both ends, and a half-finished release is meant to be a *build*
+failure rather than a silent one: `VerifyManifestVersion` in the VSIX project `XmlPeek`s the
+manifest and errors if it disagrees with `$(Version)`, and `ShippedReleaseTests` asserts the
+embedded changelog has an entry for that same version (and describes nothing newer). Releasing
+means changing `Directory.Build.props`, the manifest and the `## Unreleased` heading *together*;
+each check exists because changing only some of them is the natural mistake.
+
+CHANGELOG.md is embedded in **Core**, not the VSIX — the opposite of `BuiltInTheme`, deliberately.
+Core cannot interpret theme markup so the shell supplies it; the changelog's format is Core's own,
+so there is nothing for the shell to supply.
+
 ### Decisions worth knowing before changing them
 
 - **Storage lives in `%LOCALAPPDATA%\GitTabSync`**, never in the working tree — anything inside it
   would be rewritten by the very checkout the session exists to survive, and would show as a pending
   change on every switch. Layout: `repos\<repo-key>\<head-key>.json`, plus `settings.json` (the
-  defaults), `ui.json` (the theme) and `themes\` at the root. The same rule covers themes: a theme
-  file in the working tree would let a checkout change how the IDE looks.
+  defaults), `ui.json` (the theme), `state.json` (the version whose notes have been shown) and
+  `themes\` at the root. The same rule covers themes: a theme file in the working tree would let a
+  checkout change how the IDE looks.
+- **`.gitignore` no longer carries the template's `[Rr]elease/` and `[Dd]ebug/`.** Those match a
+  directory of that name *anywhere*, so `Core/Release/` was invisible to git — a clone would have
+  been missing the folder and failed to compile, and the failure reads as a merge conflict rather
+  than a wrong ignore rule. `bin/` and `obj/` already cover build output. Do not put them back.
 - **Session keys are `readable prefix + hash`** ([StorageKey](src/GitTabSync.Core/Storage/StorageKey.cs)).
   Branch names contain characters illegal in filenames, and sanitising alone maps `feature/foo` and
   `feature-foo` onto one file. Repo keys are case-*insensitive* (Windows paths); head keys are
@@ -432,9 +510,50 @@ assemblies are not nullable-annotated); Core does not — keep it warning-clean.
 
 ## Not built yet
 
-- No coverage of the Visual Studio layer at all. `VsEditorTabs`, `RepositorySyncSession` and
-  `GitTabSyncPackage` compile and package but **have never been run inside Visual Studio**. Treat
-  their behaviour as unverified. This is the next thing that matters.
+- No automated coverage of the Visual Studio layer at all, and almost no manual evidence either.
+  `GitTabSyncPackage` is the exception: it demonstrably loads, initialises and opens a tool window,
+  because the What's New page reached the screen. `VsEditorTabs` and `RepositorySyncSession`
+  compile and package but **have never been shown to do anything** — no capture, no restore, no
+  branch switch observed in the IDE. Treat their behaviour as unverified. This is still the next
+  thing that matters; the page proved the shell plumbing, not the feature.
+- **The What's New page works, as a first install.** It has been run in Visual Studio 2026: the
+  page appears, the IDE starts normally with it due, and the version is recorded so it does not
+  return. That makes it the *only* part of the VSIX with any evidence behind it. What is still
+  unverified: the **upgrade** path (a different page, from a different set of releases — it needs
+  two installed builds and has never run), the menu command under View > Other Windows, the
+  **Open settings** and GitHub buttons, whether switching theme in the settings window re-dresses
+  this one, and whether `GitTabSyncPackage.Instance` is populated when this window is restored
+  docked at startup.
+
+  **Getting there cost a deadlock, and the fix is load-bearing.** The first version showed the
+  window inline at the end of `InitializeAsync` via
+  `FindToolWindow(create: true)`. On the first solution opened after an upgrade, Visual Studio
+  deadlocked: a synchronous tool-window creation blocks the UI thread inside package
+  initialisation, and the shell will not hand out a tool window until that initialisation has
+  finished. Fixed by `ScheduleWhatsNewPage` — decide synchronously, then show from a
+  fire-and-forget `RunAsync` that leaves the init stack (`Task.Yield`), waits for
+  `ShellInitializedContext`, and uses the **async** `ShowToolWindowAsync`. The cure is the absence
+  of any *blocking* wait on the UI thread; the `Task.Yield` is unconditional because the shell is
+  usually already initialised by the time this package autoloads, so that wait would otherwise
+  complete synchronously and put the creation straight back on the stack it must leave.
+
+  Two things that incident taught, both cheap to lose:
+  - **A hang leaves no evidence.** No dialog, no crash dump, and `ActivityLog.xml` only records
+    with `devenv /log`. `ITabSyncLog` writes to an Output pane and *nothing else*, so the one
+    failure mode where the log matters most is the one that destroys it. Persisting the log to
+    `%LOCALAPPDATA%\GitTabSync` is the obvious next step and is not done.
+  - **Record-before-show is what made it recoverable.** `OnStartup` records inside the decision,
+    so the hung start had already written `1.0.1` and the next start decided there was nothing to
+    show and came up clean. Had the record followed a successful display, every launch would have
+    hung and the extension would have had to be uninstalled by hand.
+    `The_version_is_recorded_before_the_caller_has_shown_anything` pins this.
+
+  To make the page due again, delete `state.json`. Two traps when doing that: the package
+  autoloads on `SolutionExists`, so launching Visual Studio without opening a solution shows
+  nothing however due the page is; and testing with an *inflated* version (`/p:Version=9.9.9`)
+  poisons the state permanently, because the downgrade rule then decides "nothing to show" and
+  deliberately never records again, so it can never recover on its own. Test an upgrade with a
+  *lower* version instead — that is also the only way to exercise the `Update` path at all.
 - **The settings window has never been opened in Visual Studio.** It compiles, the `.vsct` compiles,
   and the pkgdef registers both `Menus.ctmenu` and the tool window GUID. What is *not* only "it
   builds": the control's markup and all three themes have been loaded into a real WPF runtime

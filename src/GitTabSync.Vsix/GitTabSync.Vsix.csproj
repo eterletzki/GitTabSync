@@ -63,4 +63,31 @@
     <ProjectReference Include="..\GitTabSync.Core\GitTabSync.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    Two things read a version out of this build and they are not the same thing: Visual Studio's
+    installer reads the manifest, and the What's New page reads AssemblyInformationalVersion, which
+    comes from $(Version) in Directory.Build.props. If those disagree, the extension announces a
+    release under a version nobody installed, and decides "have they seen this already?" against a
+    number the installer never used — which is silent, and shows up as the page appearing or not
+    appearing for no visible reason.
+
+    Checked here rather than left to a release checklist because the failure is invisible in the
+    built artefact: both files are individually valid, and only comparing them shows the problem.
+    The companion check is ShippedReleaseTests, which asserts the changelog has an entry for this
+    same version; between them, a half-finished release fails the build instead of shipping.
+  -->
+  <Target Name="VerifyManifestVersion" BeforeTargets="Build" Condition="'$(Version)' != ''">
+    <XmlPeek XmlInputPath="source.extension.vsixmanifest"
+             Query="/vsx:PackageManifest/vsx:Metadata/vsx:Identity/@Version"
+             Namespaces="&lt;Namespace Prefix='vsx' Uri='http://schemas.microsoft.com/developer/vsx-schema/2011' /&gt;">
+      <Output TaskParameter="Result" ItemName="VsixManifestVersion" />
+    </XmlPeek>
+
+    <Error Condition="'@(VsixManifestVersion)' == ''"
+           Text="Could not read the Version from source.extension.vsixmanifest. The What's New page depends on it agreeing with $(Version)." />
+
+    <Error Condition="'@(VsixManifestVersion)' != '$(Version)'"
+           Text="Version mismatch: source.extension.vsixmanifest says @(VsixManifestVersion), but the Version property in Directory.Build.props is $(Version). These must agree — the installer uses the manifest and the What's New page uses the assembly version. Update both together (and rename CHANGELOG.md's Unreleased heading while you are there)." />
+  </Target>
+
 </Project>

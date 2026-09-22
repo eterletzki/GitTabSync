@@ -244,6 +244,96 @@ namespace GitTabSync.Tests
                 Assert.Equal(string.Empty, store.LoadPreferences().ThemeId);
             }
         }
+
+        /// <summary>
+        /// The third document, beside the defaults and the preferences. It goes through the same
+        /// store rather than one of its own so that it inherits the write-then-replace and the
+        /// recovery policy instead of growing a second copy of both.
+        /// </summary>
+        public sealed class InstallStateDocument
+        {
+            [Fact]
+            public void Round_trip()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                store.SaveInstallState(new InstallState { LastSeenVersion = "1.2.0" });
+
+                Assert.Equal("1.2.0", store.LoadInstallState().LastSeenVersion);
+            }
+
+            [Fact]
+            public void Is_empty_when_nothing_has_been_stored()
+            {
+                using var temp = new TempDirectory();
+
+                Assert.Equal(string.Empty, new FileSettingsStore(temp.Path).LoadInstallState().LastSeenVersion);
+            }
+
+            /// <summary>
+            /// It is a fact about the install, not about a repository or a preference, so it must
+            /// not be mistaken for either of the other two documents in that folder.
+            /// </summary>
+            [Fact]
+            public void Lives_in_its_own_file_beside_the_defaults()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                var path = store.GetInstallStateFilePath();
+
+                Assert.Equal(temp.Path, Path.GetDirectoryName(path));
+                Assert.Equal("state.json", Path.GetFileName(path));
+                Assert.NotEqual(store.GetDefaultsFilePath(), path);
+                Assert.NotEqual(store.GetPreferencesFilePath(), path);
+            }
+
+            [Fact]
+            public void A_file_from_a_newer_schema_is_ignored_rather_than_half_read()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                store.SaveInstallState(new InstallState
+                {
+                    SchemaVersion = InstallState.CurrentSchemaVersion + 1,
+                    LastSeenVersion = "1.2.0",
+                });
+
+                Assert.Equal(string.Empty, store.LoadInstallState().LastSeenVersion);
+            }
+
+            /// <remarks>
+            /// Which the landing page gate reads as a first install — and then declines to act on
+            /// unless it can write a record it can read back.
+            /// </remarks>
+            [Fact]
+            public void An_unreadable_file_is_the_same_as_no_file()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+                File.WriteAllText(store.GetInstallStateFilePath(), "{ not json");
+
+                Assert.Equal(string.Empty, store.LoadInstallState().LastSeenVersion);
+            }
+
+            /// <remarks>
+            /// Stored as the text it arrived as, so a value this build cannot parse survives being
+            /// read by a build that can.
+            /// </remarks>
+            [Fact]
+            public void The_version_is_kept_verbatim_rather_than_normalised()
+            {
+                using var temp = new TempDirectory();
+                var store = new FileSettingsStore(temp.Path);
+
+                store.SaveInstallState(new InstallState { LastSeenVersion = "1.2" });
+
+                Assert.Equal("1.2", store.LoadInstallState().LastSeenVersion);
+            }
+        }
+
         public sealed class Json
         {
             [Fact]

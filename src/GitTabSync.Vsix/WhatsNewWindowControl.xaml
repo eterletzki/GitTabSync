@@ -1,0 +1,123 @@
+<UserControl x:Class="GitTabSync.WhatsNewWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             MinWidth="240">
+
+    <!--
+        Dressed by the same themes as the settings window, and it defines **no keys of its own**.
+        That is not tidiness: a theme file that already exists is never overwritten, so a key added
+        here would be missing from every theme anybody has edited — and the first page they would
+        see it missing from is this one, immediately after an upgrade. Everything below comes from
+        the contract at the top of Theming\VisualStudio.xaml, and nothing may be added to it for
+        this window's sake.
+
+        As in the settings window the lookups are all DynamicResource, so a key a user's theme
+        leaves out falls back to the control's own default instead of throwing.
+    -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+
+    <Border Style="{DynamicResource GtsSurfaceStyle}">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="Body" Margin="{DynamicResource GtsPanelMargin}">
+
+                <TextBlock Style="{DynamicResource GtsTitleTextStyle}" Text="{Binding Title}" />
+
+                <TextBlock Style="{DynamicResource GtsNoteTextStyle}" Text="{Binding IntroText}" />
+
+                <!-- Empty on an upgrade, and the note style collapses it rather than leaving a gap. -->
+                <TextBlock Style="{DynamicResource GtsNoteTextStyle}" Text="{Binding SettingsHintText}" />
+
+                <TextBlock Style="{DynamicResource GtsHeadingTextStyle}"
+                           Text="{Binding ReleasesHeading}"
+                           Visibility="{Binding HasReleasesHeading, Converter={StaticResource BoolToVisibility}}" />
+
+                <ItemsControl ItemsSource="{Binding Releases}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+
+                                <!--
+                                    Hidden when the page shows a single release, because the title
+                                    has already said which version it is. The view model decides
+                                    that, so this template needs no binding reaching out of itself.
+                                -->
+                                <TextBlock Style="{DynamicResource GtsHeadingTextStyle}"
+                                           Text="{Binding Heading}"
+                                           Visibility="{Binding ShowsHeading, Converter={StaticResource BoolToVisibility}}" />
+
+                                <ItemsControl ItemsSource="{Binding Groups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,6,0,0">
+
+                                                <!--
+                                                    "Added", "Fixed", and so on. Absent when the
+                                                    release listed its changes without grouping
+                                                    them, which is a list with no heading rather
+                                                    than one under an invented heading.
+                                                -->
+                                                <TextBlock Style="{DynamicResource GtsTitleTextStyle}"
+                                                           Text="{Binding Heading}"
+                                                           Visibility="{Binding HasHeading, Converter={StaticResource BoolToVisibility}}" />
+
+                                                <ItemsControl ItemsSource="{Binding Changes}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Grid Margin="0,3,0,0">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                    <ColumnDefinition Width="*" />
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <!--
+                                                                    Unstyled on purpose. There is
+                                                                    no body-text key in the
+                                                                    contract, and this page may not
+                                                                    add one; a plain TextBlock
+                                                                    inherits the colour and font
+                                                                    from GtsSurfaceStyle's
+                                                                    TextElement setters, which is
+                                                                    exactly what body text should
+                                                                    use. TextWrapping is layout,
+                                                                    not appearance.
+                                                                -->
+                                                                <TextBlock Grid.Column="0"
+                                                                           Text="•"
+                                                                           Margin="0,0,6,0" />
+                                                                <TextBlock Grid.Column="1"
+                                                                           Text="{Binding}"
+                                                                           TextWrapping="Wrap" />
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Style="{DynamicResource GtsButtonStyle}"
+                        Content="{Binding SettingsButtonText}"
+                        Click="OnOpenSettings" />
+
+                <Separator Style="{DynamicResource GtsSeparatorStyle}" />
+
+                <Button Style="{DynamicResource GtsLinkButtonStyle}"
+                        Content="{Binding ProjectLinkText}"
+                        HorizontalAlignment="Left"
+                        Click="OnOpenProject" />
+
+                <TextBlock Style="{DynamicResource GtsNoteTextStyle}" Text="{Binding ReopenHintText}" />
+
+            </StackPanel>
+        </ScrollViewer>
+    </Border>
+</UserControl>

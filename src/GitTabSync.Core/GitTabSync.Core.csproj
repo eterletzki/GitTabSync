@@ -18,4 +18,17 @@
     <InternalsVisibleTo Include="GitTabSync.Core.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The changelog ships inside this assembly, and inside *this* one rather than the VSIX. That is
+      the opposite of how the themes are arranged, deliberately: a theme is WPF markup that Core
+      cannot interpret, so the VSIX supplies the text; a changelog's format is Core's own — the
+      rules ChangelogParser applies are written at the top of the file — so there is nothing for
+      the shell to supply. It is embedded rather than read from beside the extension because an
+      installed VSIX is unpacked somewhere the extension has no business going looking, and a file
+      that can go missing turns "what changed" into "nothing, apparently".
+    -->
+    <EmbeddedResource Include="..\..\CHANGELOG.md" LogicalName="GitTabSync.CHANGELOG.md" />
+  </ItemGroup>
+
 </Project>
