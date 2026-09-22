@@ -16,6 +16,18 @@
           <ButtonText>Git Tab Sync</ButtonText>
         </Strings>
       </Button>
+
+      <!--
+           Beside the settings window, and reachable by name for the life of the install: the page
+           opens by itself once after an upgrade, and somebody who closed it before reading it
+           needs a way back that does not involve reinstalling the extension.
+      -->
+      <Button guid="guidGitTabSyncCmdSet" id="cmdidWhatsNewWindow" priority="0x0101" type="Button">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_WNDO_OTRWNDWS1" />
+        <Strings>
+          <ButtonText>Git Tab Sync: What's New</ButtonText>
+        </Strings>
+      </Button>
     </Buttons>
   </Commands>
 
@@ -24,6 +36,7 @@
 
     <GuidSymbol name="guidGitTabSyncCmdSet" value="{66eb4939-3cb0-4a97-a8c6-967023cd2427}">
       <IDSymbol name="cmdidSettingsWindow" value="0x0100" />
+      <IDSymbol name="cmdidWhatsNewWindow" value="0x0101" />
     </GuidSymbol>
   </Symbols>
 

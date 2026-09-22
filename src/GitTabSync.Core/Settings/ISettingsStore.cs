@@ -31,5 +31,14 @@ namespace GitTabSync.Settings
         UiPreferences LoadPreferences();
 
         void SavePreferences(UiPreferences preferences);
+
+        /// <summary>
+        /// What this install has already been shown. A third document rather than a member of the
+        /// preferences: see <see cref="InstallState"/>.
+        /// </summary>
+        /// <inheritdoc cref="LoadDefaults"/>
+        InstallState LoadInstallState();
+
+        void SaveInstallState(InstallState state);
     }
 }

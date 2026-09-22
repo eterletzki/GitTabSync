@@ -59,6 +59,46 @@ namespace GitTabSync.Tests.TestSupport
             _preferences = preferences;
         }
 
+        private InstallState _installState = new InstallState();
+
+        public InstallState LoadInstallState() =>
+            new InstallState
+            {
+                SchemaVersion = _installState.SchemaVersion,
+                LastSeenVersion = _installState.LastSeenVersion,
+            };
+
+        public void SaveInstallState(InstallState state)
+        {
+            if (FailOnSave is not null)
+            {
+                throw FailOnSave;
+            }
+
+            if (DropsInstallStateSaves)
+            {
+                // A save that is accepted and kept nowhere. This is what FileSettingsStore looks
+                // like from the outside when the write fails: it swallows the IO failure and
+                // returns void, so "succeeded" and "did nothing" are the same observation. The
+                // landing page gate is the one caller that must tell them apart, so it must be
+                // testable against a store that lies this way and not only against one that
+                // throws.
+                SaveCount++;
+                return;
+            }
+
+            SaveCount++;
+            _installState = state;
+        }
+
+        /// <summary>
+        /// When set, <see cref="SaveInstallState"/> reports success and keeps nothing.
+        /// </summary>
+        public bool DropsInstallStateSaves { get; set; }
+
+        /// <inheritdoc cref="Seed"/>
+        public void SeedInstallState(InstallState state) => _installState = state;
+
         /// <summary>Puts a document in place without going through a resolver, for load tests.</summary>
         public void Seed(string repositoryWorkingDirectory, ScopedSettings settings) =>
             _repositories[repositoryWorkingDirectory] = settings;

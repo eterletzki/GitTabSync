@@ -8,6 +8,19 @@
     <Product>Git Tab Sync</Product>
     <Company>Eterletzki</Company>
     <NeutralLanguage>en-US</NeutralLanguage>
+
+    <!--
+      The release version, in one place. It must agree with the Version in
+      src\GitTabSync.Vsix\source.extension.vsixmanifest: the What's New page reads
+      AssemblyInformationalVersion to decide which release notes it has already shown, so a build
+      whose assembly says one thing and whose manifest says another announces a version nobody
+      installed. The VSIX project's VerifyManifestVersion target makes that disagreement a build
+      error rather than something a user discovers.
+
+      Releasing means changing this and the manifest together, and renaming CHANGELOG.md's
+      "Unreleased" heading to match.
+    -->
+    <Version>1.0.1</Version>
   </PropertyGroup>
 
 </Project>
