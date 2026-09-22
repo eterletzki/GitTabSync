@@ -23,7 +23,7 @@ Two rules matter when editing it:
   file has an entry for the version in `Directory.Build.props`, so a release whose notes were
   never written fails the build rather than shipping a page with nothing on it.
 
-## Unreleased
+## 1.1.0 — 2026-09-22
 
 ### Added
 
