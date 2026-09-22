@@ -20,7 +20,7 @@
       Releasing means changing this and the manifest together, and renaming CHANGELOG.md's
       "Unreleased" heading to match.
     -->
-    <Version>1.0.1</Version>
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
 </Project>
